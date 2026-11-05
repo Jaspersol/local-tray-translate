@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/logo.png" width="120" alt="TranslateLite logo">
+
 # TranslateLite
 
 ### A lightweight Windows dictionary that answers offline in milliseconds

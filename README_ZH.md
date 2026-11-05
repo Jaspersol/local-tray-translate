@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/logo.png" width="120" alt="TranslateLite logo">
+
 # TranslateLite
 
 ### 一个毫秒级离线作答的轻量 Windows 词典
