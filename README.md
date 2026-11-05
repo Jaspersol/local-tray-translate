@@ -1,25 +1,40 @@
+<div align="center">
+
 # TranslateLite
 
-TranslateLite 是一款轻量级 Windows 桌面词典查询工具，支持中英互查。专注于本地词典搜索、划词翻译、截图 OCR 翻译、托盘常驻和低资源占用。
+### A lightweight Windows dictionary that answers offline in milliseconds
 
-## 技术栈
+**Double-tap a hotkey to look up the word under your cursor, or drag a box over a screen region and let Windows OCR read it — everything is served from a local SQLite dictionary, no network, no account.**
 
-- C# WPF，基于 `net8.0-windows10.0.19041.0`
-- `Microsoft.Data.Sqlite` + SQLite FTS5 全文搜索
-- Windows 内置 OCR（`Windows.Media.Ocr`）
-- Win32 全局快捷键
-- Windows 托盘图标（WinForms `NotifyIcon`）
+[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#requirements)
+[![.NET](https://img.shields.io/badge/.NET-8-512BD4.svg)](https://dotnet.microsoft.com/)
+[![WPF](https://img.shields.io/badge/UI-WPF-0078D4.svg)](https://learn.microsoft.com/dotnet/desktop/wpf/)
+[![SQLite](https://img.shields.io/badge/search-SQLite%20FTS5-003B57.svg)](https://www.sqlite.org/fts5.html)
+[![License](https://img.shields.io/badge/license-not%20set-lightgrey.svg)](#license)
 
-## 快捷键
+English | [中文](README_ZH.md)
 
-- `Ctrl+Alt+X`：获取选中文本并在词典中查询
-- `Ctrl+Alt+S`：框选屏幕区域，调用 Windows OCR 识别文字后在词典中查询
+**[Quick Start](#quick-start) · [Hotkeys](#hotkeys) · [Features](#features) · [Dictionary Data](#dictionary-data) · [FAQ](#faq)**
 
-> 快捷键可通过右键托盘图标 → "设置" 进行自定义修改。
+</div>
 
-## 构建
+## Why TranslateLite?
 
-安装 .NET 8 SDK（包含 Windows Desktop 工作负载），然后运行：
+Most dictionary tools want to be a browser tab, a subscription, or a 2 GB download that loads the whole word list into memory. TranslateLite does one thing: it answers a lookup from a local SQLite file, stays in the tray at a few dozen megabytes, and survives being used forty times an hour while you read.
+
+- **Local only** — a single `dictionary.db` (ECDICT + CC-CEDICT) queried through FTS5; no server, no telemetry
+- **Two hotkeys, two workflows** — `Ctrl+Alt+X` takes the current selection and searches it; `Ctrl+Alt+S` opens a capture overlay, OCRs the region, and searches the recognised text
+- **Tiered lookup instead of a single `LIKE`** — exact match, then user entries, then tokenised candidates, then FTS5 prefix search, then edit distance, so `helo` still finds `halo`
+- **A separate user dictionary** — your own entries live in `user_dictionary.db`, so replacing the main dictionary never touches them
+- **OCR, not machine translation** — screen capture reads the characters and looks *those* up, which is what you want for reading, not for translating full sentences
+
+## Requirements
+
+- **Windows 10 build 19041 (20H1) or later** — the app targets `net8.0-windows10.0.19041.0`
+- **.NET 8 SDK** with the Windows Desktop workload, to build from source
+- **Windows OCR language packs** — install the Chinese and English OCR features in Windows Settings for the best recognition
+
+## Quick Start
 
 ```powershell
 dotnet restore .\TranslateLite.sln
@@ -27,93 +42,157 @@ dotnet build .\TranslateLite.sln
 dotnet run --project .\src\TranslateLite\TranslateLite.csproj
 ```
 
-## 打包
+The app starts hidden with a tray icon; a query window opens from the tray menu.
 
-```powershell
-# 方式一：使用发布脚本
-powershell -NoProfile -ExecutionPolicy Bypass -File .\src\TranslateLite\publish.ps1
+## Hotkeys
 
-# 方式二：直接使用 dotnet publish
-dotnet publish .\src\TranslateLite\TranslateLite.csproj -c Release -p:PublishProfile=FolderProfile -o .\publish
-```
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+Alt+X` | Take the current selection (via clipboard) and look it up |
+| `Ctrl+Alt+S` | Drag a box on screen, OCR it, and look the text up |
 
-发布后会在 `publish\` 目录生成完整的应用程序文件夹，包含 `TranslateLite.exe` 和 `dictionary.db` 等所有文件。将整个 `publish` 文件夹打包为 ZIP 即可分发给其他用户使用。
+Both are configurable from the tray icon → 设置. Registration failures are silent by design: a screenshot tool or an IME may already own the combination, and the main window and tray menu still work, so a popup on every start would be noise.
 
-## 词典数据库
+## Features
 
-首次运行时会自动创建：
+### Lookup
+
+- **Tiered fallback**, each tier only filling the results still missing:
+  1. exact match on the main dictionary (`normalized_word` index)
+  2. exact match plus translation/example substring match on the user dictionary
+  3. tokenised candidates, matched exactly one by one (Latin split on spaces and punctuation, Chinese with a 2–4 character sliding window)
+  4. FTS5 prefix search over the full text, ordered by `rank`
+  5. edit-distance fallback (OSA distance; budget 1 for ≤4 characters, 2 for ≤8, 3 above that), which is what makes `helo`→`halo` and `wrold`→`world` work
+- **User entries win** — a word you saved yourself is returned before the main dictionary's entry for the same word
+- **Result popup** — a separate always-on-top window, kept out of the taskbar, so a hotkey lookup doesn't have to reuse the query window you had open
+
+### Capture and OCR
+
+- **Region overlay** — a translucent full-screen window to drag the box
+- **Windows built-in OCR** — `Windows.Media.Ocr`, preferring the OCR languages you have installed
+- **Clipboard-safe selection capture** — `Ctrl+C` is sent, the selection read, and the previous clipboard content restored afterwards
+
+### Tray and settings
+
+- **Tray resident** — closing the query window hides it; the tray menu has 打开 / 划词翻译 (with its hotkey) / 截图翻译 (with its hotkey) / 设置 / 退出
+- **Settings in `settings.json`** — both hotkeys (modifiers + virtual-key code) are persisted as JSON; a corrupt file falls back to defaults rather than blocking startup
+
+### User dictionary
+
+- **Separate file** — `%LOCALAPPDATA%\TranslateLite\user_dictionary.db` next to the main dictionary, so upgrading the dictionary never overwrites user data
+- **Manager window** — add, edit (double-click a row), delete, filter by word/translation/tag, and bulk import
+- **Bulk import format** — tab-separated, one entry per line, lines starting with `#` ignored:
 
 ```text
-%LOCALAPPDATA%\TranslateLite\dictionary.db
+word<TAB>translation[<TAB>definition[<TAB>example]]
 ```
 
-应用会插入少量示例数据，方便测试 UI。实际数据应按照 `data/schema.sql` 中定义的表结构导入 `entries` 表：
+## Dictionary Data
+
+On first run the app creates `%LOCALAPPDATA%\TranslateLite\dictionary.db` and inserts a few sample rows so the UI can be exercised. Real data goes into the `entries` table defined in `data/schema.sql`:
 
 ```sql
 INSERT INTO entries(word, normalized_word, lang, phonetic, definition, translation, example, source)
 VALUES ('example', 'example', 'en', 'ig-zam-puhl', 'a representative item', '示例翻译', 'This is an example.', 'ecdict');
 ```
 
-推荐数据源：
+Recommended sources:
 
-- ECDICT 用于英中词条
-- CC-CEDICT 用于中英词条
+- **ECDICT** for English → Chinese entries
+- **CC-CEDICT** for Chinese → English entries
 
-建议离线导入，按需查询 SQLite。如果以低资源占用为目标，避免将整个词典加载到内存中。
+Import offline and query on demand: loading a whole dictionary into memory would defeat the point of a tray-resident tool.
 
-## 导入 ECDICT 和 CC-CEDICT
+### Importing ECDICT and CC-CEDICT
 
-本仓库包含两个词典数据源的导入工具：
+The repository ships two import tools:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\download_dictionaries.ps1
-$py='C:\Users\25832\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
-& $py .\tools\import_dictionaries.py --ecdict .\data\raw\ecdict.csv --cedict .\data\raw\cedict_ts.u8 --output .\data\dictionary.db
-& $py .\tools\verify_dictionary.py .\data\dictionary.db
+python .\tools\import_dictionaries.py --ecdict .\data\raw\ecdict.csv --cedict .\data\raw\cedict_ts.u8 --output .\data\dictionary.db
+python .\tools\verify_dictionary.py .\data\dictionary.db
 ```
 
-生成的 `data/dictionary.db` 会在构建时复制到应用输出目录。首次启动时，应用会将该数据库复制到 `%LOCALAPPDATA%\TranslateLite\dictionary.db`。
+`download_dictionaries.ps1` fetches ECDICT's CSV and CC-CEDICT's gzipped text into `data/raw/` and decompresses the latter. `import_dictionaries.py` rebuilds `entries` and `entries_fts`. `verify_dictionary.py` prints the row count and a few sample lookups, which is the fastest way to tell a broken import from a broken query.
 
-## 项目结构
+The generated `data/dictionary.db` is copied into the build output, and on first launch the app copies it to `%LOCALAPPDATA%\TranslateLite\dictionary.db`.
+
+## Build and Publish
+
+```powershell
+# Option 1: the publish script
+powershell -NoProfile -ExecutionPolicy Bypass -File .\src\TranslateLite\publish.ps1
+
+# Option 2: dotnet publish directly
+dotnet publish .\src\TranslateLite\TranslateLite.csproj -c Release -p:PublishProfile=FolderProfile -o .\publish
+```
+
+The result is a self-contained folder with `TranslateLite.exe` and `dictionary.db`; zip the whole `publish` folder to distribute it.
+
+## Project Structure
 
 ```text
 src/TranslateLite
-|-- App.xaml(.cs)                      应用启动与服务组装
-|-- Interop/HotkeyService.cs           Win32 全局快捷键
-|-- Models/DictionaryEntry.cs          查询结果模型
-|-- Models/AppSettings.cs              应用设置模型
-|-- Services/DictionaryService.cs      SQLite 和 FTS 查询
-|-- Services/OcrService.cs             Windows OCR 适配器
-|-- Services/TrayService.cs            托盘图标和菜单
-|-- Services/ClipboardSelectionService.cs  剪贴板选词服务
-|-- Services/SettingsService.cs        设置持久化服务
-`-- Windows/                           WPF 主窗口、弹窗和截图窗口
+|-- App.xaml(.cs)                          Startup and service wiring
+|-- Interop/HotkeyService.cs               Win32 global hotkeys
+|-- Models/DictionaryEntry.cs              Lookup result model
+|-- Models/AppSettings.cs                  Settings model
+|-- Services/DictionaryService.cs          SQLite and FTS queries
+|-- Services/OcrService.cs                 Windows OCR adapter
+|-- Services/TrayService.cs                Tray icon and menu
+|-- Services/ClipboardSelectionService.cs  Selection capture via the clipboard
+|-- Services/SettingsService.cs            settings.json persistence
+`-- Windows/                               WPF windows: main, popup, capture, settings, user dictionary
 ```
 
-## 说明
+## Tech Stack
 
-- 截图翻译是 OCR 识别 + 词典查询，而非完整的句子机器翻译。
-- 划词翻译会短暂使用 `Ctrl+C`，然后尽力恢复剪贴板之前的内容。
-- OCR 引擎优先使用用户已安装的 Windows OCR 语言。建议在 Windows 设置中安装中英文 OCR 语言支持以获得最佳效果。
+C# WPF on `net8.0-windows10.0.19041.0` · `Microsoft.Data.Sqlite` with SQLite FTS5 · Windows built-in OCR (`Windows.Media.Ocr`) · Win32 `RegisterHotKey` · WinForms `NotifyIcon` for the tray
 
-## 用户词典
+## FAQ
 
-用户自补词条存放在独立数据库 `%LOCALAPPDATA%\TranslateLite\user_dictionary.db`，与主词典 `dictionary.db` 分离，升级覆盖主库不会丢失用户数据。主窗口点击"用户词典"打开管理界面：新增、编辑（双击行）、删除、按词条/翻译/标签过滤，以及从文本文件批量导入。
+<details>
+<summary><strong>Is screen capture translating sentences?</strong></summary>
 
-批量导入格式为制表符分隔，每行一个词条，`#` 开头的行被忽略：
+No. It is OCR plus dictionary lookup: the recognised text is looked up as words. Full-sentence machine translation would need a model the app deliberately doesn't ship.
 
-```text
-word<TAB>translation[<TAB>definition[<TAB>example]]
-```
+</details>
 
-查询时用户词条优先于主词典返回。
+<details>
+<summary><strong>The screen hotkey finds nothing on a web page or an image.</strong></summary>
 
-## 模糊查询
+Windows OCR only reads text the way the OS sees it; heavily styled web text, dark themes, and small fonts often fall below its confidence. Zoom in or capture a tighter box. Also confirm the Chinese and English OCR language packs are installed.
 
-查询按以下优先级逐级降级，直到取满结果：
+</details>
 
-1. 主词典精确匹配（`normalized_word` 索引）
-2. 用户词条精确匹配 + 翻译/例句包含匹配
-3. 分词候选逐个精确匹配（拉丁按空格与标点切分，中文做 2~4 字滑窗）
-4. FTS5 前缀全文搜索（`rank` 排序）
-5. 编辑距离兜底（OSA 距离，覆盖 `helo`→`halo`、`wrold`→`world` 等拼写错误；距离预算：≤4 字符允许 1，≤8 允许 2，其余 3）
+<details>
+<summary><strong>My clipboard content changed after using the selection hotkey.</strong></summary>
+
+`Ctrl+Alt+X` sends `Ctrl+C` and then restores the previous clipboard content on a best-effort basis. Applications that reject or delay the copy can leave the clipboard holding the selection.
+
+</details>
+
+<details>
+<summary><strong>Where is my data?</strong></summary>
+
+`%LOCALAPPDATA%\TranslateLite\` holds `dictionary.db`, `user_dictionary.db`, and `settings.json`. Deleting `dictionary.db` makes the app recreate it from the copy in its install folder on the next start.
+
+</details>
+
+<details>
+<summary><strong>Can I replace the main dictionary while keeping my own entries?</strong></summary>
+
+Yes — user entries live in a different file, so swapping `dictionary.db` leaves `user_dictionary.db` untouched. That separation is the reason they are two databases rather than one table.
+
+</details>
+
+<details>
+<summary><strong>A hotkey does nothing at all.</strong></summary>
+
+Another application already registered the combination (screenshot tools and IMEs are the usual suspects). Registration failures are ignored on purpose so the app still starts; pick a different combination in 设置.
+
+</details>
+
+## License
+
+No license file is included in this repository yet — copyright of the respective authors, all rights reserved. Open an issue if you need explicit permission to reuse it.
