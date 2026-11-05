@@ -407,7 +407,7 @@ public sealed class DictionaryService : IDisposable
         }
 
         var userCandidates = new HashSet<string>();
-        var userCommand = _userConnection.CreateCommand();
+        await using var userCommand = _userConnection.CreateCommand();
         userCommand.CommandText =
             "SELECT DISTINCT normalized_word FROM user_entries " +
             "WHERE normalized_word LIKE $prefix LIMIT 4096;";
