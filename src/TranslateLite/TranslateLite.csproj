@@ -23,7 +23,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\data\dictionary.db" Link="dictionary.db" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('..\..\data\dictionary.db')" />
+    <None Include="..\..\data\dictionary.db"
+          Link="dictionary.db"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Condition="Exists('..\..\data\dictionary.db')" />
     <Resource Include="Resources\app.ico" />
   </ItemGroup>
 </Project>

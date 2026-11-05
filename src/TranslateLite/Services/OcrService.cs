@@ -7,6 +7,7 @@ using Windows.Storage;
 
 namespace TranslateLite.Services;
 
+/// <summary>用 Windows.Media.Ocr 离线识别截图文字；识别语言跟随用户配置的 OCR 语言列表。</summary>
 public sealed class OcrService
 {
     public async Task<string> ReadTextAsync(Bitmap bitmap)
@@ -19,7 +20,9 @@ public sealed class OcrService
             var storageFile = await StorageFile.GetFileFromPathAsync(tempFile);
             using var randomAccessStream = await storageFile.OpenReadAsync();
             var decoder = await BitmapDecoder.CreateAsync(randomAccessStream);
-            var softwareBitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+            var softwareBitmap = await decoder.GetSoftwareBitmapAsync(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Premultiplied);
 
             var engine = OcrEngine.TryCreateFromUserProfileLanguages()
                 ?? OcrEngine.TryCreateFromLanguage(new Language("en-US"));

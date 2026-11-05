@@ -7,6 +7,10 @@ using TranslateLite.Windows;
 
 namespace TranslateLite;
 
+/// <summary>
+/// 应用入口：负责组装设置、词典、托盘、全局热键与主窗口，并把三条翻译入口
+/// （划词、截图、主窗口查询）统一收敛到 <see cref="ShowLookupAsync"/>。
+/// </summary>
 public partial class App : System.Windows.Application
 {
     private TrayService? _tray;
@@ -18,11 +22,14 @@ public partial class App : System.Windows.Application
     private SettingsService? _settings;
     private AppSettings? _appSettings;
 
+    // WPF 的 OnStartup 只能是 async void；这里的异常会直接终止进程，故每个可失败步骤都自行兜底。
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TranslateLite");
+        var appData = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "TranslateLite");
         Directory.CreateDirectory(appData);
 
         var settingsPath = Path.Combine(appData, "settings.json");
@@ -40,8 +47,7 @@ public partial class App : System.Windows.Application
         _mainWindow = new MainWindow(_dictionary);
         _mainWindow.Hide();
 
-        var selectionText = SettingsWindow.FormatHotkey(_appSettings.SelectionHotkey.Modifiers, _appSettings.SelectionHotkey.Key);
-        var screenOcrText = SettingsWindow.FormatHotkey(_appSettings.ScreenOcrHotkey.Modifiers, _appSettings.ScreenOcrHotkey.Key);
+        var (selectionText, screenOcrText) = FormatHotkeyTexts(_appSettings);
 
         _tray = new TrayService(
             showAction: () => ShowMainWindow(),
@@ -85,14 +91,22 @@ public partial class App : System.Windows.Application
             _appSettings.ScreenOcrHotkey = settingsWindow.ScreenOcrConfig;
             _settings.Save(_appSettings);
 
-            var selectionText = SettingsWindow.FormatHotkey(_appSettings.SelectionHotkey.Modifiers, _appSettings.SelectionHotkey.Key);
-            var screenOcrText = SettingsWindow.FormatHotkey(_appSettings.ScreenOcrHotkey.Modifiers, _appSettings.ScreenOcrHotkey.Key);
+            var (selectionText, screenOcrText) = FormatHotkeyTexts(_appSettings);
             _tray?.UpdateHotkeyTexts(selectionText, screenOcrText);
         }
 
+        // 设置窗口无论确认还是取消都会重注册：取消时沿用旧配置，正好把先前 UnregisterAll 的热键恢复。
         _hotkeys?.Register(
             _appSettings.SelectionHotkey.Modifiers, _appSettings.SelectionHotkey.Key,
             _appSettings.ScreenOcrHotkey.Modifiers, _appSettings.ScreenOcrHotkey.Key);
+    }
+
+    /// <summary>把两组热键格式化成托盘菜单显示的文本。</summary>
+    private static (string selectionText, string screenOcrText) FormatHotkeyTexts(AppSettings settings)
+    {
+        return (
+            SettingsWindow.FormatHotkey(settings.SelectionHotkey.Modifiers, settings.SelectionHotkey.Key),
+            SettingsWindow.FormatHotkey(settings.ScreenOcrHotkey.Modifiers, settings.ScreenOcrHotkey.Key));
     }
 
     private void ShowMainWindow()
@@ -123,6 +137,8 @@ public partial class App : System.Windows.Application
         }
         catch
         {
+            // 内置词典只是首启的便利副本：磁盘占用、权限或文件被占用时失败可接受，
+            // 沿用已有的用户词典，后续启动会再次尝试。
         }
     }
 
@@ -145,6 +161,7 @@ public partial class App : System.Windows.Application
         return null;
     }
 
+    /// <summary>内置词典比现有文件更大才覆盖，避免旧安装包把用户已更新的词典替换回去。</summary>
     private static bool ShouldReplaceDictionary(string sourcePath, string destinationPath)
     {
         if (!File.Exists(destinationPath))
@@ -175,6 +192,7 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        // 托盘菜单关闭后焦点尚未回到前台窗口，立刻截图会把菜单残影一起抓进去。
         await Task.Delay(300);
 
         var overlay = new CaptureOverlayWindow();

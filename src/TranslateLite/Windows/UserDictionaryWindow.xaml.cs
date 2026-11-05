@@ -11,10 +11,14 @@ using TranslateLite.Services;
 
 namespace TranslateLite.Windows;
 
+/// <summary>用户词典管理窗口：列表、过滤、新增/编辑/删除与文本导入。</summary>
 public partial class UserDictionaryWindow : Window
 {
     private readonly DictionaryService _dictionary;
     private readonly ObservableCollection<UserEntry> _entries = [];
+
+    /// <summary>过滤框内容；仅在非空白时参与查询，避免空串触发一次全表 LIKE。</summary>
+    private string? CurrentFilter => string.IsNullOrWhiteSpace(FilterBox.Text) ? null : FilterBox.Text;
 
     public UserDictionaryWindow(DictionaryService dictionary)
     {
@@ -61,7 +65,7 @@ public partial class UserDictionaryWindow : Window
             var entry = editor.Result;
             await _dictionary.AddUserEntryAsync(entry.Word, entry.Language, entry.Phonetic,
                 entry.Definition, entry.Translation, entry.Example, null, entry.Tags);
-            await ReloadAsync(string.IsNullOrWhiteSpace(FilterBox.Text) ? null : FilterBox.Text);
+            await ReloadAsync(CurrentFilter);
         }
     }
 
@@ -74,7 +78,7 @@ public partial class UserDictionaryWindow : Window
         }
 
         await _dictionary.DeleteUserEntryAsync(entry.Id);
-        await ReloadAsync(string.IsNullOrWhiteSpace(FilterBox.Text) ? null : FilterBox.Text);
+        await ReloadAsync(CurrentFilter);
     }
 
     private async void OnImportClick(object sender, RoutedEventArgs e)
@@ -95,11 +99,16 @@ public partial class UserDictionaryWindow : Window
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException)
         {
-            System.Windows.MessageBox.Show(this, exception.Message, "导入失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            System.Windows.MessageBox.Show(
+                this,
+                exception.Message,
+                "导入失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
             return;
         }
 
-        await ReloadAsync(string.IsNullOrWhiteSpace(FilterBox.Text) ? null : FilterBox.Text);
+        await ReloadAsync(CurrentFilter);
     }
 
     private async void OnEntryDoubleClick(object sender, MouseButtonEventArgs e)
@@ -123,12 +132,16 @@ public partial class UserDictionaryWindow : Window
             updated.Definition, updated.Translation, updated.Example, null, updated.Tags);
         if (languageChanged)
         {
-            System.Windows.MessageBox.Show(this, "语言不可通过编辑修改，忽略 language 变更。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            System.Windows.MessageBox.Show(
+                this,
+                "语言不可通过编辑修改，忽略 language 变更。",
+                "提示",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
 
-        await ReloadAsync(string.IsNullOrWhiteSpace(FilterBox.Text) ? null : FilterBox.Text);
+        await ReloadAsync(CurrentFilter);
     }
-
 
     private static string[] ParseTags(string tagsJson)
     {
@@ -138,6 +151,8 @@ public partial class UserDictionaryWindow : Window
         }
         catch
         {
+            // 标签列存的是 JSON 文本，历史数据或手改数据库都可能让它损坏；
+            // 这里退化成“无标签”而不是抛错，否则整条词条会打不开。
             return [];
         }
     }

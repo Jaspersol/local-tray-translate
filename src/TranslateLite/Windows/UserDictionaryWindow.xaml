@@ -1,7 +1,7 @@
 <Window x:Class="TranslateLite.Windows.UserDictionaryWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="&#x7528;&#x6237;&#x8bcd;&#x5178;"
+        Title="用户词典"
         Width="760"
         Height="560"
         MinWidth="560"
@@ -17,30 +17,42 @@
 
     <DockPanel Grid.Row="0" Margin="0,0,0,12" LastChildFill="True">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="8,0,0,0">
-        <Button x:Name="AddButton" Content="&#x65B0;&#x589E;" Style="{StaticResource PrimaryButton}" Click="OnAddClick" Margin="0,0,6,0" />
-        <Button x:Name="ImportButton" Content="&#x5BFC;&#x5165;..." Style="{StaticResource GhostButton}" Click="OnImportClick" Margin="0,0,6,0" />
-        <Button x:Name="DeleteButton" Content="&#x5220;&#x9664;" Style="{StaticResource DangerButton}" Click="OnDeleteClick" Margin="0" />
+        <Button x:Name="AddButton"
+                Content="新增"
+                Style="{StaticResource PrimaryButton}"
+                Click="OnAddClick"
+                Margin="0,0,6,0" />
+        <Button x:Name="ImportButton"
+                Content="导入..."
+                Style="{StaticResource GhostButton}"
+                Click="OnImportClick"
+                Margin="0,0,6,0" />
+        <Button x:Name="DeleteButton"
+                Content="删除"
+                Style="{StaticResource DangerButton}"
+                Click="OnDeleteClick"
+                Margin="0" />
       </StackPanel>
       <TextBox x:Name="FilterBox"
                Style="{StaticResource SearchBox}"
                Margin="0"
-               ToolTip="&#x6309;&#x8BCD;&#x6761;/&#x7FFB;&#x8BD1;/&#x6807;&#x7B7E;&#x8FC7;&#x6EE4;"
+               ToolTip="按词条/翻译/标签过滤"
                KeyDown="OnFilterKeyDown" />
     </DockPanel>
 
     <TextBlock Grid.Row="1"
-               Text="&#x70B9;&#x51FB;&#x884C;&#x53EF;&#x7F16;&#x8F91;&#xFF0C;Enter &#x4FDD;&#x5B58;&#xFF0C;Esc &#x53D6;&#x6D88;"
+               Text="点击行可编辑，Enter 保存，Esc 取消"
                Style="{StaticResource Hint}"
                Margin="2,0,0,8" />
 
     <ListView x:Name="EntriesList" Grid.Row="2" MouseDoubleClick="OnEntryDoubleClick">
       <ListView.View>
         <GridView>
-          <GridViewColumn Header="&#x8BCD;&#x6761;" Width="160" DisplayMemberBinding="{Binding Word}" />
-          <GridViewColumn Header="&#x7FFB;&#x8BD1;" Width="220" DisplayMemberBinding="{Binding Translation}" />
-          <GridViewColumn Header="&#x91CA;&#x4E49;" Width="200" DisplayMemberBinding="{Binding Definition}" />
-          <GridViewColumn Header="&#x6807;&#x7B7E;" Width="120" DisplayMemberBinding="{Binding TagsJson}" />
-          <GridViewColumn Header="&#x66F4;&#x65B0;&#x65F6;&#x95F4;" Width="150" DisplayMemberBinding="{Binding UpdatedAt}" />
+          <GridViewColumn Header="词条" Width="160" DisplayMemberBinding="{Binding Word}" />
+          <GridViewColumn Header="翻译" Width="220" DisplayMemberBinding="{Binding Translation}" />
+          <GridViewColumn Header="释义" Width="200" DisplayMemberBinding="{Binding Definition}" />
+          <GridViewColumn Header="标签" Width="120" DisplayMemberBinding="{Binding TagsJson}" />
+          <GridViewColumn Header="更新时间" Width="150" DisplayMemberBinding="{Binding UpdatedAt}" />
         </GridView>
       </ListView.View>
     </ListView>

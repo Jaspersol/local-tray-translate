@@ -52,7 +52,11 @@
         </GroupBox>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
-            <Button Content="取消" Style="{StaticResource GhostButton}" Click="OnCancelClick" Width="84" Margin="0,0,8,0" />
+            <Button Content="取消"
+                    Style="{StaticResource GhostButton}"
+                    Click="OnCancelClick"
+                    Width="84"
+                    Margin="0,0,8,0" />
             <Button Content="保存" Style="{StaticResource PrimaryButton}" Click="OnSaveClick" Width="84" Margin="0" />
         </StackPanel>
     </Grid>

@@ -4,6 +4,7 @@ using TranslateLite.Services;
 
 namespace TranslateLite.Windows;
 
+/// <summary>主查询窗口：输入词条查内置词典与用户词典（关闭时只隐藏，常驻托盘）。</summary>
 public partial class MainWindow : Window
 {
     private readonly DictionaryService _dictionary;
@@ -16,6 +17,8 @@ public partial class MainWindow : Window
 
     private async void OnLookupClicked(object sender, RoutedEventArgs e) => await LookupAsync();
 
+    // KeyEventArgs 保留全限定名：本项目 UseWindowsForms + ImplicitUsings 会把 System.Windows.Forms
+    // 一并放进全局 using，短名与 Forms.KeyEventArgs 冲突（CS0104）。其余文件同类写法同理。
     private async void OnQueryKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key == Key.Enter)

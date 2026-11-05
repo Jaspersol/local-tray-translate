@@ -375,7 +375,9 @@
                           BorderBrush="{TemplateBinding BorderBrush}"
                           Content="{TemplateBinding SelectionBoxItem}"
                           ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
-                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" />
+                          IsChecked="{Binding IsDropDownOpen,
+                                              Mode=TwoWay,
+                                              RelativeSource={RelativeSource TemplatedParent}}" />
 
             <Popup x:Name="PART_Popup"
                    AllowsTransparency="True"

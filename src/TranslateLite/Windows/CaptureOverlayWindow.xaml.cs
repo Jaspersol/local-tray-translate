@@ -8,6 +8,7 @@ using WpfPoint = System.Windows.Point;
 
 namespace TranslateLite.Windows;
 
+/// <summary>全屏截图遮罩：拖拽选区后返回位图，Esc 或空白处点击取消。</summary>
 public partial class CaptureOverlayWindow : Window
 {
     private WpfPoint? _startPoint;

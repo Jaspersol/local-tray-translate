@@ -12,6 +12,7 @@ public sealed record UserEntryInput(
     string? Example,
     string[] Tags);
 
+/// <summary>用户词条编辑器：新增与编辑共用同一套字段，保存后通过 <see cref="Result"/> 回传。</summary>
 public partial class UserEntryEditorWindow : Window
 {
     /// <summary>保存成功时返回输入；取消为 null。</summary>

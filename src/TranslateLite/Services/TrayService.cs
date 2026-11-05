@@ -5,6 +5,10 @@ using System.Windows.Forms;
 
 namespace TranslateLite.Services;
 
+/// <summary>
+/// 托盘图标与右键菜单：承载“打开主窗口 / 划词翻译 / 截图翻译 / 设置 / 退出”五个入口。
+/// 菜单文案里的快捷键文本由调用方格式化后传入，切换快捷键时调用 <see cref="UpdateHotkeyTexts"/> 刷新。
+/// </summary>
 public sealed class TrayService : IDisposable
 {
     private readonly Action _showAction;
@@ -17,7 +21,12 @@ public sealed class TrayService : IDisposable
     private ToolStripItem? _selectionItem;
     private ToolStripItem? _screenOcrItem;
 
-    public TrayService(Action showAction, Func<Task> selectionAction, Func<Task> screenOcrAction, Action settingsAction, Action exitAction)
+    public TrayService(
+        Action showAction,
+        Func<Task> selectionAction,
+        Func<Task> screenOcrAction,
+        Action settingsAction,
+        Action exitAction)
     {
         _showAction = showAction;
         _selectionAction = selectionAction;
@@ -29,12 +38,18 @@ public sealed class TrayService : IDisposable
     public void Initialize(string selectionHotkeyText, string screenOcrHotkeyText)
     {
         _menu = new ContextMenuStrip();
-        _menu.Items.Add("\u6253\u5f00", null, (_, _) => _showAction());
-        _selectionItem = _menu.Items.Add($"\u5212\u8bcd\u7ffb\u8bd1  {selectionHotkeyText}", null, async (_, _) => await _selectionAction());
-        _screenOcrItem = _menu.Items.Add($"\u622a\u56fe\u7ffb\u8bd1  {screenOcrHotkeyText}", null, async (_, _) => await _screenOcrAction());
+        _menu.Items.Add("打开", null, (_, _) => _showAction());
+        _selectionItem = _menu.Items.Add(
+            $"划词翻译  {selectionHotkeyText}",
+            null,
+            async (_, _) => await _selectionAction());
+        _screenOcrItem = _menu.Items.Add(
+            $"截图翻译  {screenOcrHotkeyText}",
+            null,
+            async (_, _) => await _screenOcrAction());
         _menu.Items.Add(new ToolStripSeparator());
-        _menu.Items.Add("\u8bbe\u7f6e", null, (_, _) => _settingsAction());
-        _menu.Items.Add("\u9000\u51fa", null, (_, _) => _exitAction());
+        _menu.Items.Add("设置", null, (_, _) => _settingsAction());
+        _menu.Items.Add("退出", null, (_, _) => _exitAction());
 
         var icon = LoadTrayIcon();
 
@@ -48,6 +63,7 @@ public sealed class TrayService : IDisposable
         _notifyIcon.DoubleClick += (_, _) => _showAction();
     }
 
+    /// <summary>优先用内嵌的 app.ico；取不到资源时退回系统默认图标，保证托盘始终可见。</summary>
     private static Icon LoadTrayIcon()
     {
         try
@@ -62,6 +78,7 @@ public sealed class TrayService : IDisposable
         }
         catch
         {
+            // 资源 URI 解析或图标字节损坏都会抛异常；托盘不是核心功能，宁可降级也不让启动失败。
         }
 
         return SystemIcons.Application;
@@ -71,12 +88,12 @@ public sealed class TrayService : IDisposable
     {
         if (_selectionItem is not null)
         {
-            _selectionItem.Text = $"\u5212\u8bcd\u7ffb\u8bd1  {selectionHotkeyText}";
+            _selectionItem.Text = $"划词翻译  {selectionHotkeyText}";
         }
 
         if (_screenOcrItem is not null)
         {
-            _screenOcrItem.Text = $"\u622a\u56fe\u7ffb\u8bd1  {screenOcrHotkeyText}";
+            _screenOcrItem.Text = $"截图翻译  {screenOcrHotkeyText}";
         }
     }
 

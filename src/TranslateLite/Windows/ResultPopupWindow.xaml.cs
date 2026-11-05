@@ -49,7 +49,7 @@ public partial class ResultPopupWindow : Window
         {
             ResultPanel.Children.Add(new TextBlock
             {
-                Text = "\u6ca1\u6709\u627e\u5230\u8bcd\u5178\u6761\u76ee\u3002",
+                Text = "没有找到词典条目。",
                 Foreground = ThemeBrush("BrushTextMuted"),
                 TextWrapping = TextWrapping.Wrap
             });
@@ -65,19 +65,41 @@ public partial class ResultPopupWindow : Window
                 Padding = new Thickness(0, 12, 0, 12)
             };
 
+            var headword = string.IsNullOrWhiteSpace(result.Phonetic)
+                ? result.Word
+                : $"{result.Word}  [{result.Phonetic}]";
             var stack = new StackPanel();
             stack.Children.Add(ReadOnlyText(
-                string.IsNullOrWhiteSpace(result.Phonetic) ? result.Word : $"{result.Word}  [{result.Phonetic}]",
-                fontSize: 18, FontWeights.SemiBold, ThemeBrush("BrushTextPrimary"), 0, italic: false));
-            stack.Children.Add(ReadOnlyText(result.Translation, fontSize: 15, null,
-                ThemeBrush("BrushTextPrimary"), 8, italic: false));
-            stack.Children.Add(ReadOnlyText(result.Definition, fontSize: 13, null,
-                ThemeBrush("BrushTextSecondary"), 4, italic: false));
+                headword,
+                fontSize: 18,
+                fontWeight: FontWeights.SemiBold,
+                foreground: ThemeBrush("BrushTextPrimary"),
+                topMargin: 0,
+                italic: false));
+            stack.Children.Add(ReadOnlyText(
+                result.Translation,
+                fontSize: 15,
+                fontWeight: null,
+                foreground: ThemeBrush("BrushTextPrimary"),
+                topMargin: 8,
+                italic: false));
+            stack.Children.Add(ReadOnlyText(
+                result.Definition,
+                fontSize: 13,
+                fontWeight: null,
+                foreground: ThemeBrush("BrushTextSecondary"),
+                topMargin: 4,
+                italic: false));
 
             if (!string.IsNullOrWhiteSpace(result.Example))
             {
-                stack.Children.Add(ReadOnlyText(result.Example, fontSize: 13, null,
-                    ThemeBrush("BrushTextMuted"), 6, italic: true));
+                stack.Children.Add(ReadOnlyText(
+                    result.Example,
+                    fontSize: 13,
+                    fontWeight: null,
+                    foreground: ThemeBrush("BrushTextMuted"),
+                    topMargin: 6,
+                    italic: true));
             }
 
             container.Child = stack;
@@ -89,8 +111,14 @@ public partial class ResultPopupWindow : Window
     private static System.Windows.Media.Brush ThemeBrush(string key) =>
         (System.Windows.Media.Brush)System.Windows.Application.Current.FindResource(key);
 
-    private static System.Windows.Controls.TextBox ReadOnlyText(string text, double fontSize, FontWeight? fontWeight,
-        System.Windows.Media.Brush foreground, double topMargin, bool italic)
+    /// <summary>创建一个只读、可换行的文本块（WPF 的 TextBlock 不可选中文本，故这里用 TextBox）。</summary>
+    private static System.Windows.Controls.TextBox ReadOnlyText(
+        string text,
+        double fontSize,
+        FontWeight? fontWeight,
+        System.Windows.Media.Brush foreground,
+        double topMargin,
+        bool italic)
     {
         var box = new System.Windows.Controls.TextBox
         {
@@ -107,6 +135,6 @@ public partial class ResultPopupWindow : Window
             Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Top
         };
-        return box; 
+        return box;
     }
 }

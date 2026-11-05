@@ -1,0 +1,13 @@
+# 行尾统一 LF（Windows 上 core.autocrlf 不再改写工作区）
+* text=auto eol=lf
+
+# 二进制资源
+*.png binary
+*.ico binary
+*.icns binary
+*.wav binary
+*.db binary
+*.zip binary
+*.dll binary
+*.exe binary
+*.pdb binary

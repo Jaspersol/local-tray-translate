@@ -5,6 +5,10 @@ using TranslateLite.Models;
 
 namespace TranslateLite.Services;
 
+/// <summary>
+/// 词典访问层。内置词典（dictionary.db，随应用/安装包更新）与用户词条（user_dictionary.db）
+/// 分库存放，用户数据不会在词典更新时被覆盖，因此两个连接各自持有、互不 JOIN。
+/// </summary>
 public sealed class DictionaryService : IDisposable
 {
     private readonly SqliteConnection _connection;
@@ -27,6 +31,8 @@ public sealed class DictionaryService : IDisposable
 
         return new SqliteConnection(builder.ToString());
     }
+
+    // ---- 初始化：建表、FTS5 同步触发器、首启种子数据 ----
 
     public async Task InitializeAsync()
     {
@@ -105,11 +111,14 @@ public sealed class DictionaryService : IDisposable
                 updated_at TEXT NOT NULL
             );
             """);
-        await ExecuteOnUserAsync("CREATE INDEX IF NOT EXISTS idx_user_entries_normalized_word ON user_entries(normalized_word);");
+        await ExecuteOnUserAsync(
+            "CREATE INDEX IF NOT EXISTS idx_user_entries_normalized_word ON user_entries(normalized_word);");
     }
 
-    // ---- 用户词典（补充方案） ----
+    // ---- 用户词条 CRUD（独立库，加载时优先于内置词典命中） ----
 
+    /// <summary>新增一条用户词条，返回新记录的 id。语言留空时按内容自动判定。</summary>
+    /// <exception cref="ArgumentException"><paramref name="word"/> 规范化后为空。</exception>
     public async Task<int> AddUserEntryAsync(string word, string language, string? phonetic,
         string definition, string translation, string? example, string? note, IReadOnlyCollection<string>? tags)
     {
@@ -123,13 +132,16 @@ public sealed class DictionaryService : IDisposable
         var tagsJson = JsonSerializer.Serialize(tags ?? []);
         await using var command = _userConnection.CreateCommand();
         command.CommandText = """
-            INSERT INTO user_entries(word, normalized_word, lang, phonetic, definition, translation, example, tags, note, created_at, updated_at)
+            INSERT INTO user_entries(word, normalized_word, lang, phonetic, definition, translation,
+                example, tags, note, created_at, updated_at)
             VALUES ($word, $normalized, $lang, $phonetic, $definition, $translation, $example, $tags, $note, $now, $now)
             RETURNING id;
             """;
         command.Parameters.AddWithValue("$word", word.Trim());
         command.Parameters.AddWithValue("$normalized", normalized);
-        command.Parameters.AddWithValue("$lang", string.IsNullOrWhiteSpace(language) ? DetectLanguage(normalized) : language);
+        command.Parameters.AddWithValue(
+            "$lang",
+            string.IsNullOrWhiteSpace(language) ? DetectLanguage(normalized) : language);
         command.Parameters.AddWithValue("$phonetic", (object?)phonetic ?? DBNull.Value);
         command.Parameters.AddWithValue("$definition", definition ?? "");
         command.Parameters.AddWithValue("$translation", translation ?? "");
@@ -140,6 +152,7 @@ public sealed class DictionaryService : IDisposable
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    /// <summary>按 id 删除用户词条，返回是否真的删到了记录。</summary>
     public async Task<bool> DeleteUserEntryAsync(int id)
     {
         await using var command = _userConnection.CreateCommand();
@@ -148,6 +161,11 @@ public sealed class DictionaryService : IDisposable
         return await command.ExecuteNonQueryAsync() > 0;
     }
 
+    /// <summary>
+    /// 全量更新一条用户词条（未传的字段会被写回空值）。语言列不更新：改语种等于换词典，
+    /// 界面层已限制，这里保持字段不可变以免同一 id 的含义漂移。
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="word"/> 规范化后为空。</exception>
     public async Task<bool> UpdateUserEntryAsync(int id, string word, string? phonetic,
         string definition, string translation, string? example, string? note, IReadOnlyCollection<string>? tags)
     {
@@ -178,6 +196,9 @@ public sealed class DictionaryService : IDisposable
         return await command.ExecuteNonQueryAsync() > 0;
     }
 
+    /// <summary>按更新时间倒序列出用户词条；<paramref name="filter"/> 为空表示不过滤。</summary>
+    /// <remarks>过滤是「词条 / 翻译 / 标签 JSON」三列的 contains 匹配，刻意不用 FTS：
+    /// 用户词条量级很小，LIKE 足够且能顺带命中标签原文。</remarks>
     public async Task<IReadOnlyList<UserEntry>> ListUserEntriesAsync(string? filter = null, int limit = 500)
     {
         var results = new List<UserEntry>();
@@ -185,7 +206,10 @@ public sealed class DictionaryService : IDisposable
         command.CommandText = """
             SELECT id, word, lang, phonetic, definition, translation, example, tags, note, created_at, updated_at
             FROM user_entries
-            WHERE ($filter IS NULL OR word LIKE '%' || $filter || '%' OR translation LIKE '%' || $filter || '%' OR tags LIKE '%' || $filter || '%')
+            WHERE ($filter IS NULL
+                OR word LIKE '%' || $filter || '%'
+                OR translation LIKE '%' || $filter || '%'
+                OR tags LIKE '%' || $filter || '%')
             ORDER BY updated_at DESC
             LIMIT $limit;
             """;
@@ -212,6 +236,10 @@ public sealed class DictionaryService : IDisposable
         return results;
     }
 
+    /// <summary>
+    /// 从制表符分隔的文本导入用户词条（word / translation / 可选 definition / 可选 example，'#' 开头为注释）。
+    /// </summary>
+    /// <exception cref="InvalidDataException">文件里没有一行符合格式。</exception>
     public async Task ImportUserEntriesAsync(string filePath)
     {
         var lines = await File.ReadAllLinesAsync(filePath);
@@ -239,7 +267,15 @@ public sealed class DictionaryService : IDisposable
                 continue;
             }
 
-            await AddUserEntryAsync(word, DetectLanguage(word), null, definition, translation, example, note: null, tags: null);
+            await AddUserEntryAsync(
+                word,
+                DetectLanguage(word),
+                null,
+                definition,
+                translation,
+                example,
+                note: null,
+                tags: null);
             imported++;
         }
 
@@ -249,6 +285,17 @@ public sealed class DictionaryService : IDisposable
         }
     }
 
+    // ---- 查询：分层召回，逐层补足 limit ----
+
+    /// <summary>
+    /// 分层查词：用户词典 → 精确 → 候选切分 → FTS → 编辑距离，每层只补剩余名额，最多返回 <paramref name="limit"/> 条。
+    /// </summary>
+    /// <remarks>
+    /// 顺序按「命中可信度」排：用户自己录的词优先于内置词典，精确匹配优先于模糊匹配；
+    /// 每层只取缺口数量，是为了让高可信层的结果不被低可信层挤掉，同时避免全表打分。
+    /// FTS 放在编辑距离之前，因为倒排命中（词形/释义）比按距离猜更接近用户意图；
+    /// 编辑距离最贵（要先取候选再 O(n*m) 计算），因此永远放在最后一层兜底。
+    /// </remarks>
     public async Task<IReadOnlyList<DictionaryEntry>> LookupAsync(string input, int limit = 12)
     {
         var query = NormalizeInput(input);
@@ -301,8 +348,13 @@ public sealed class DictionaryService : IDisposable
         _userConnection.Dispose();
     }
 
+    // ---- 查询实现：用户词典 / 精确 / 候选 / FTS / 编辑距离 / 切分工具 ----
+
+    /// <summary>用户词典召回：先精确（按词形），再按释义/例句包含关键字模糊命中，两段各自去重后按 UNION ALL 拼接。</summary>
     private async Task<List<DictionaryEntry>> QueryUserEntriesAsync(string query, int limit)
     {
+        // 两段 UNION ALL 而不是一段 OR，是因为排序规则不同：精确段按词长、时间排（短词更可能是本体），
+        // 模糊段只按词长排（更新时间对“包含关键字”没有参考价值）；合成一段会逼两者共用一套 ORDER BY。
         var normalized = NormalizeWord(query);
         await using var command = _userConnection.CreateCommand();
         command.CommandText = """
@@ -333,7 +385,8 @@ public sealed class DictionaryService : IDisposable
             return [];
         }
 
-        // 编辑距离兜底：先取 SQL 前缀/包含候选缩小范围，再在内存里精确算距离。
+        // 编辑距离兜底：先用 LIKE '首字符%' 圈出候选（走 normalized_word 前缀索引），再在内存里精确算距离。
+        // 候选上限 4096 是「一次查词最多算 4096 次 O(n*m)」的经验值，超过它查词会有肉眼可感的卡顿。
         var normalized = NormalizeWord(query);
         var candidates = new List<string>();
         await using var command = _connection.CreateCommand();
@@ -355,7 +408,9 @@ public sealed class DictionaryService : IDisposable
 
         var userCandidates = new HashSet<string>();
         var userCommand = _userConnection.CreateCommand();
-        userCommand.CommandText = "SELECT DISTINCT normalized_word FROM user_entries WHERE normalized_word LIKE $prefix LIMIT 4096;";
+        userCommand.CommandText =
+            "SELECT DISTINCT normalized_word FROM user_entries " +
+            "WHERE normalized_word LIKE $prefix LIMIT 4096;";
         userCommand.Parameters.AddWithValue("$prefix", ToLikePrefix(normalized));
         await using var userReader = await userCommand.ExecuteReaderAsync();
         while (await userReader.ReadAsync())
@@ -369,10 +424,10 @@ public sealed class DictionaryService : IDisposable
         var results = new List<DictionaryEntry>();
         foreach (var candidate in candidates
                      .Where(candidate => candidate.Length is >= 2 and <= 48)
-                     .OrderBy(candidate => Levenshtein(query, candidate))
+                     .OrderBy(candidate => OsaDistance(query, candidate))
                      .ThenBy(candidate => candidate.Length))
         {
-            if (Levenshtein(query, candidate) > budget)
+            if (OsaDistance(query, candidate) > budget)
             {
                 break;
             }
@@ -402,8 +457,11 @@ public sealed class DictionaryService : IDisposable
         return string.Concat(first, "%");
     }
 
+    /// <summary>允许的编辑距离随查询长度放宽：短词放太松会召回一堆无关词，长词放太紧则几乎召不回。</summary>
     private static int EditDistanceBudget(string query)
     {
+        // 阈值依据：≤4 字符（如 "wrod"）只容忍 1 处笔误，否则 3 个字母的词会匹配到半张表；
+        // ≤8 字符容忍 2 处；更长的词组笔误概率随之上升，给到 3 处，再往上就失去区分度。
         var chars = query.EnumerateRunes().Count();
         return chars switch
         {
@@ -414,7 +472,8 @@ public sealed class DictionaryService : IDisposable
     }
 
     // OSA（最优字符串对齐）距离：相邻换位记 1，覆盖 wrold/teh 类换位 typo。
-    private static int Levenshtein(string source, string target)
+    // 名字如实写成 OsaDistance：若只叫 Levenshtein，后来者会以为换位要记 2 而误判召回结果。
+    private static int OsaDistance(string source, string target)
     {
         if (source.Length == 0)
         {
@@ -555,6 +614,8 @@ public sealed class DictionaryService : IDisposable
         return entries;
     }
 
+    // ---- 首启种子数据：让空库也能演示查词 ----
+
     private async Task SeedIfEmptyAsync()
     {
         await using var countCommand = _connection.CreateCommand();
@@ -567,11 +628,21 @@ public sealed class DictionaryService : IDisposable
 
         var samples = new[]
         {
-            new DictionaryEntry("hello", "en", "heh-loh", "used as a greeting", "\u4f60\u597d; \u5582", "Hello, nice to meet you.", "sample"),
-            new DictionaryEntry("translate", "en", "trans-late", "to express words in another language", "\u7ffb\u8bd1; \u8f6c\u6362", "Translate the selected text.", "sample"),
-            new DictionaryEntry("dictionary", "en", "dik-shuh-ner-ee", "a reference work of words and meanings", "\u8bcd\u5178; \u5b57\u5178", "Look it up in the dictionary.", "sample"),
-            new DictionaryEntry("\u622a\u56fe", "zh", null, "capture an image of part or all of the screen", "screenshot; screen capture", "\u622a\u56fe\u7ffb\u8bd1", "sample"),
-            new DictionaryEntry("\u9009\u62e9", "zh", null, "to pick or select", "select; choose", "\u9009\u62e9\u6587\u672c\u7ffb\u8bd1", "sample")
+            new DictionaryEntry(
+                "hello", "en", "heh-loh", "used as a greeting", "你好; 喂",
+                "Hello, nice to meet you.", "sample"),
+            new DictionaryEntry(
+                "translate", "en", "trans-late", "to express words in another language", "翻译; 转换",
+                "Translate the selected text.", "sample"),
+            new DictionaryEntry(
+                "dictionary", "en", "dik-shuh-ner-ee", "a reference work of words and meanings",
+                "词典; 字典", "Look it up in the dictionary.", "sample"),
+            new DictionaryEntry(
+                "截图", "zh", null, "capture an image of part or all of the screen",
+                "screenshot; screen capture", "截图翻译", "sample"),
+            new DictionaryEntry(
+                "选择", "zh", null, "to pick or select", "select; choose",
+                "选择文本翻译", "sample")
         };
 
         using var transaction = _connection.BeginTransaction();
@@ -604,6 +675,16 @@ public sealed class DictionaryService : IDisposable
         await command.ExecuteNonQueryAsync();
     }
 
+    // ---- 文本规范化与 FTS 查询串构造 ----
+
+    // 空白 + 中英文标点都当分隔符：OCR 与复制粘贴常把单词和标点粘连，先切干净再规范化。
+    private static readonly char[] TokenSeparators =
+        [' ', '\r', '\n', '\t', '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '"', '\'', '/', '\\'];
+
+    private static readonly StringSplitOptions TokenSplitOptions =
+        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries;
+
+    /// <summary>把换行/制表符/连续空格压成单个空格并裁剪两端，用于输入框里的整段选中文本。</summary>
     private static string NormalizeInput(string input)
     {
         var compact = string.Join(' ', input.Split(['\r', '\n', '\t', ' '], StringSplitOptions.RemoveEmptyEntries));
@@ -624,9 +705,18 @@ public sealed class DictionaryService : IDisposable
         return string.IsNullOrWhiteSpace(fts) ? "\"\"" : fts;
     }
 
+    /// <summary>
+    /// 把用户输入切成可能命中词典的候选词：先按空白与标点切分，再为中文补 n-gram 子串。
+    /// </summary>
+    /// <remarks>
+    /// 中文没有空格，整句输入（如“截图翻译”）切完只有一个 token，精确查询必然落空；
+    /// 因此额外产出 2–4 字子串（2 字覆盖常用词，4 字覆盖成语/短语），长度从长到短输出，
+    /// 让较长的短语先被匹配，避免“翻译”抢在“截图翻译”前面。子串总量按 48 封顶，
+    /// 否则长句会产出 O(n²) 个候选，每个候选都要走一次查询。
+    /// </remarks>
     private static IEnumerable<string> ExtractCandidates(string query)
     {
-        foreach (var token in query.Split([' ', '\r', '\n', '\t', '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '"', '\'', '/', '\\'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var token in query.Split(TokenSeparators, TokenSplitOptions))
         {
             var normalized = NormalizeWord(token);
             if (normalized.Length is >= 2 and <= 48)
@@ -655,7 +745,8 @@ public sealed class DictionaryService : IDisposable
         }
     }
 
-    private static bool IsCjk(char value) => value is >= '\u3400' and <= '\u9fff';
+    // CJK 统一表意文字基本区：㐀 起至 鿿 止（U+3400–U+9FFF），扩展区不含在内。
+    private static bool IsCjk(char value) => value is >= '㐀' and <= '鿿';
 
     private static bool SameEntry(DictionaryEntry left, DictionaryEntry right) =>
         string.Equals(left.Word, right.Word, StringComparison.OrdinalIgnoreCase)
