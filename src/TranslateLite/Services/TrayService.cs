@@ -84,6 +84,19 @@ public sealed class TrayService : IDisposable
         return SystemIcons.Application;
     }
 
+    /// <summary>用 balloon 提示一项非阻断的问题（如热键注册失败）；托盘未初始化时静默忽略。</summary>
+    public void ShowWarning(string title, string message)
+    {
+        try
+        {
+            _notifyIcon?.ShowBalloonTip(5000, title, message, ToolTipIcon.Warning);
+        }
+        catch
+        {
+            // balloon 依赖系统通知设置；弹不出来时不影响主流程。
+        }
+    }
+
     public void UpdateHotkeyTexts(string selectionHotkeyText, string screenOcrHotkeyText)
     {
         if (_selectionItem is not null)

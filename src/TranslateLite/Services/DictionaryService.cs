@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using TranslateLite.Models;
@@ -113,6 +114,75 @@ public sealed class DictionaryService : IDisposable
             """);
         await ExecuteOnUserAsync(
             "CREATE INDEX IF NOT EXISTS idx_user_entries_normalized_word ON user_entries(normalized_word);");
+
+        await MigrateLegacyKeysAsync();
+    }
+
+    // ---- 一次性迁移：历史数据把未转小写的词形写进了 normalized_word，而查询一律用小写比较 ----
+
+    // 旧版导入脚本的 CC-CEDICT 分支直接写 word 列的原文（如 "A片"），旧版用户词条也只在 AddUserEntryAsync
+    // 里做了 NormalizeInput。这些行按小写查询永远命中不了，启动时统一压成 lower(trim()) 一次。
+    // 版本号存在库文件自己的 user_version 里：词典被新版覆盖后（user_version 回到 0）迁移会再跑一次。
+    private const int KeyNormalizationVersion = 1;
+
+    private async Task MigrateLegacyKeysAsync()
+    {
+        // 内置词典由 Python 导入脚本生成，全是大写只可能来自旧版 CC-CEDICT 分支；
+        // SQLite 的 lower() 只覆盖 ASCII，对生成数据足够，且比把 90 万行读进内存再比较便宜。
+        if (await GetUserVersionAsync(_connection) < KeyNormalizationVersion)
+        {
+            await ExecuteAsync(
+                "UPDATE entries SET normalized_word = lower(trim(normalized_word)) " +
+                "WHERE normalized_word != lower(trim(normalized_word));");
+            await ExecuteAsync($"PRAGMA user_version = {KeyNormalizationVersion};");
+        }
+
+        // 用户词条是自己敲的，可能含非 ASCII 大写（西里尔、希腊字母等），必须用 ToLowerInvariant
+        // 而不是 SQL 的 lower()（只转 ASCII），否则迁移后仍然查不到。
+        if (await GetUserVersionAsync(_userConnection) < KeyNormalizationVersion)
+        {
+            var pending = new List<(long Id, string Normalized)>();
+            await using (var select = _userConnection.CreateCommand())
+            {
+                select.CommandText = "SELECT id, normalized_word FROM user_entries;";
+                await using var reader = await select.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var id = reader.GetInt64(0);
+                    var stored = reader.GetString(1);
+                    var expected = NormalizeWord(stored);
+                    if (!string.Equals(stored, expected, StringComparison.Ordinal))
+                    {
+                        pending.Add((id, expected));
+                    }
+                }
+            }
+
+            if (pending.Count > 0)
+            {
+                using var transaction = _userConnection.BeginTransaction();
+                foreach (var (id, normalized) in pending)
+                {
+                    await using var update = _userConnection.CreateCommand();
+                    update.Transaction = transaction;
+                    update.CommandText = "UPDATE user_entries SET normalized_word = $normalized WHERE id = $id;";
+                    update.Parameters.AddWithValue("$normalized", normalized);
+                    update.Parameters.AddWithValue("$id", id);
+                    await update.ExecuteNonQueryAsync();
+                }
+
+                transaction.Commit();
+            }
+
+            await ExecuteOnUserAsync($"PRAGMA user_version = {KeyNormalizationVersion};");
+        }
+    }
+
+    private static async Task<long> GetUserVersionAsync(SqliteConnection connection)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version;";
+        return Convert.ToInt64(await command.ExecuteScalarAsync() ?? 0L);
     }
 
     // ---- 用户词条 CRUD（独立库，加载时优先于内置词典命中） ----
@@ -122,7 +192,7 @@ public sealed class DictionaryService : IDisposable
     public async Task<int> AddUserEntryAsync(string word, string language, string? phonetic,
         string definition, string translation, string? example, string? note, IReadOnlyCollection<string>? tags)
     {
-        var normalized = NormalizeInput(word);
+        var normalized = NormalizeWord(word);
         if (string.IsNullOrWhiteSpace(normalized))
         {
             throw new ArgumentException("word 不能为空。", nameof(word));
@@ -169,7 +239,7 @@ public sealed class DictionaryService : IDisposable
     public async Task<bool> UpdateUserEntryAsync(int id, string word, string? phonetic,
         string definition, string translation, string? example, string? note, IReadOnlyCollection<string>? tags)
     {
-        var normalized = NormalizeInput(word);
+        var normalized = NormalizeWord(word);
         if (string.IsNullOrWhiteSpace(normalized))
         {
             throw new ArgumentException("word 不能为空。", nameof(word));
@@ -237,12 +307,14 @@ public sealed class DictionaryService : IDisposable
     }
 
     /// <summary>
-    /// 从制表符分隔的文本导入用户词条（word / translation / 可选 definition / 可选 example，'#' 开头为注释）。
+    /// 从文本文件导入用户词条（word / translation / 可选 definition / 可选 example，'#' 开头为注释）。
+    /// 制表符与逗号两种分隔符都接受：按首个有效行检测，逗号文件按带引号的 CSV 规则切分。
     /// </summary>
     /// <exception cref="InvalidDataException">文件里没有一行符合格式。</exception>
     public async Task ImportUserEntriesAsync(string filePath)
     {
         var lines = await File.ReadAllLinesAsync(filePath);
+        var delimiter = DetectDelimiter(lines);
         var imported = 0;
         foreach (var rawLine in lines)
         {
@@ -252,7 +324,7 @@ public sealed class DictionaryService : IDisposable
                 continue;
             }
 
-            var parts = line.Split('\t');
+            var parts = SplitDelimited(line, delimiter);
             if (parts.Length < 2)
             {
                 continue;
@@ -281,7 +353,8 @@ public sealed class DictionaryService : IDisposable
 
         if (imported == 0)
         {
-            throw new InvalidDataException("文件中未找到有效的词条行（格式：word<TAB>translation[<TAB>definition[<TAB>example]]）。");
+            throw new InvalidDataException(
+                "文件中未找到有效的词条行（格式：word<TAB>translation[<TAB>definition[<TAB>example]]，或同结构的逗号分隔 CSV）。");
         }
     }
 
@@ -298,7 +371,9 @@ public sealed class DictionaryService : IDisposable
     /// </remarks>
     public async Task<IReadOnlyList<DictionaryEntry>> LookupAsync(string input, int limit = 12)
     {
-        var query = NormalizeInput(input);
+        // 一次性统一到小写：后面每一层（用户词典、精确、FTS、编辑距离）都用这个值比较，
+        // 混用原文与实际只转小写的词形，会让含大写字母的词条在某些层命中、在另一些层落空。
+        var query = NormalizeWord(input);
         if (string.IsNullOrWhiteSpace(query))
         {
             return [];
@@ -420,18 +495,16 @@ public sealed class DictionaryService : IDisposable
 
         candidates.AddRange(userCandidates.Except(candidates, StringComparer.Ordinal));
 
-        var budget = EditDistanceBudget(query);
+        var budget = EditDistanceBudget(normalized);
         var results = new List<DictionaryEntry>();
-        foreach (var candidate in candidates
+        // 距离只算一次：排序键和阈值判断用同一个值，避免同一候选被算两遍 O(n*m)。
+        foreach (var (candidate, _) in candidates
                      .Where(candidate => candidate.Length is >= 2 and <= 48)
-                     .OrderBy(candidate => OsaDistance(query, candidate))
-                     .ThenBy(candidate => candidate.Length))
+                     .Select(candidate => (candidate, distance: OsaDistance(normalized, candidate)))
+                     .Where(item => item.distance <= budget)
+                     .OrderBy(item => item.distance)
+                     .ThenBy(item => item.candidate.Length))
         {
-            if (OsaDistance(query, candidate) > budget)
-            {
-                break;
-            }
-
             var matches = await QueryExactAsync(candidate, limit - results.Count);
             foreach (var match in matches)
             {
@@ -485,6 +558,7 @@ public sealed class DictionaryService : IDisposable
             return source.Length;
         }
 
+        // 三行滚动：previous = i-1 行，current = i 行，twoRowsBack = i-2 行（换位要用到 i-2 行）。
         var previous = new int[target.Length + 1];
         var current = new int[target.Length + 1];
         var twoRowsBack = new int[target.Length + 1];
@@ -509,10 +583,13 @@ public sealed class DictionaryService : IDisposable
                 }
             }
 
-            (twoRowsBack, previous) = (previous, current);
-            (previous, current) = (current, previous);
+            // 轮换三行：i-1 行退成 i-2 行，i 行成为下一轮的 i-1 行，旧 i-2 行被回收作暂存。
+            // 三个变量必须指向三块不同的数组，任何一次交换让 previous 与 current 别名相同，
+            // 下一行就会在刚写好的行上原地覆盖，距离结果会系统性偏大。
+            (twoRowsBack, previous, current) = (previous, current, twoRowsBack);
         }
 
+        // 循环结束时 previous 是最后一行（source.Length 行），答案在它的最后一列。
         return previous[target.Length];
     }
 
@@ -532,16 +609,17 @@ public sealed class DictionaryService : IDisposable
 
     private async Task<List<DictionaryEntry>> QueryExactAsync(string query, int limit)
     {
+        // 唯一比较键是 normalized_word：写入与查询都经过 NormalizeWord，键上还有索引；
+        // 再加 `OR word = ...` 会让 SQLite 放弃索引去全表扫描（entries 约 90 万行），因此不再用 word 列兜底。
         await using var command = _connection.CreateCommand();
         command.CommandText = """
             SELECT word, lang, phonetic, definition, translation, example, source
             FROM entries
-            WHERE normalized_word = $query OR word = $raw
-            ORDER BY CASE WHEN normalized_word = $query THEN 0 ELSE 1 END, length(word)
+            WHERE normalized_word = $query
+            ORDER BY length(word)
             LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$query", NormalizeWord(query));
-        command.Parameters.AddWithValue("$raw", query);
         command.Parameters.AddWithValue("$limit", limit);
         return await ReadEntriesAsync(command);
     }
@@ -691,7 +769,86 @@ public sealed class DictionaryService : IDisposable
         return compact.Trim();
     }
 
-    private static string NormalizeWord(string word) => word.Trim().ToLowerInvariant();
+    /// <summary>
+    /// 词典键的唯一规范化：折叠空白并转小写。写库（normalized_word）与查询都必须走这里，
+    /// 否则含大写、换行或连续空格的词条会写入一套键、用另一套键去查。
+    /// </summary>
+    private static string NormalizeWord(string word) => NormalizeInput(word).ToLowerInvariant();
+
+    /// <summary>
+    /// 判断导入文件的字段分隔符：首个有效行含制表符就是 TSV，否则按 CSV 处理。
+    /// 导入对话框同时列出 .tsv/.txt/.csv，两种格式都要能真正读进来。
+    /// </summary>
+    private static char DetectDelimiter(IEnumerable<string> lines)
+    {
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith('#'))
+            {
+                continue;
+            }
+
+            return line.Contains('\t') ? '\t' : ',';
+        }
+
+        return '\t';
+    }
+
+    /// <summary>
+    /// 按分隔符切分一行：制表符直接切；逗号按 RFC 4180 处理双引号包裹的字段（"a,b" 视为一个字段，"" 表示一个引号）。
+    /// </summary>
+    private static string[] SplitDelimited(string line, char delimiter)
+    {
+        if (delimiter == '\t')
+        {
+            return line.Split('\t');
+        }
+
+        var fields = new List<string>();
+        var field = new StringBuilder();
+        var inQuotes = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var ch = line[i];
+            if (inQuotes)
+            {
+                if (ch == '"')
+                {
+                    if (i + 1 < line.Length && line[i + 1] == '"')
+                    {
+                        field.Append('"');
+                        i++;
+                    }
+                    else
+                    {
+                        inQuotes = false;
+                    }
+                }
+                else
+                {
+                    field.Append(ch);
+                }
+            }
+            else if (ch == '"' && field.Length == 0)
+            {
+                // 只有字段开头的引号才开启引用区；词里出现的 5" 之类的引号按普通字符处理。
+                inQuotes = true;
+            }
+            else if (ch == delimiter)
+            {
+                fields.Add(field.ToString());
+                field.Clear();
+            }
+            else
+            {
+                field.Append(ch);
+            }
+        }
+
+        fields.Add(field.ToString());
+        return [.. fields];
+    }
 
     private static string ToFtsQuery(string query)
     {

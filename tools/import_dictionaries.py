@@ -67,13 +67,6 @@ def open_text(path: Path):
     return path.open("r", encoding="utf-8", errors="replace", newline="")
 
 
-def split_examples(raw: str) -> str:
-    raw = clean(raw)
-    if not raw:
-        return ""
-    return raw.replace("\r\n", "\n").replace("\r", "\n")
-
-
 def import_ecdict(connection: sqlite3.Connection, path: Path, batch_size: int) -> int:
     if not path.exists():
         return 0
@@ -91,7 +84,6 @@ def import_ecdict(connection: sqlite3.Connection, path: Path, batch_size: int) -
             phonetic = clean(row.get("phonetic")) or None
             definition = clean(row.get("definition"))
             translation = clean(row.get("translation"))
-            example = split_examples(row.get("exchange") or row.get("collins") or row.get("bnc")) or None
 
             if not definition and not translation:
                 continue
@@ -103,7 +95,9 @@ def import_ecdict(connection: sqlite3.Connection, path: Path, batch_size: int) -
                 phonetic,
                 definition,
                 translation,
-                example,
+                # ECDICT 没有例句字段：exchange 是词形变化代码（s:a-bombs），collins/bnc 是词频排名（0、1、2），
+                # 都不是句子。写进 example 只会在界面上显示成“0”，宁可为空。
+                None,
                 "ecdict",
             ))
 
@@ -149,7 +143,7 @@ def import_cc_cedict(connection: sqlite3.Connection, path: Path, batch_size: int
                 seen.add(key)
                 batch.append((
                     word,
-                    word,
+                    normalize_word(word),
                     "zh",
                     clean(pinyin) or None,
                     "",

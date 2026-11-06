@@ -2,9 +2,11 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using Microsoft.Data.Sqlite;
 using Microsoft.Win32;
 using TranslateLite.Models;
 using TranslateLite.Services;
@@ -86,7 +88,8 @@ public partial class UserDictionaryWindow : Window
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "导入用户词条",
-            Filter = "文本文件 (*.txt;*.tsv;*.csv)|*.txt;*.tsv;*.csv|所有文件 (*.*)|*.*"
+            // 制表符与逗号两种分隔符解析器都支持，因此对话框列出的扩展名与实际能读的格式一致。
+            Filter = "词条文件 (*.tsv;*.csv;*.txt)|*.tsv;*.csv;*.txt|所有文件 (*.*)|*.*"
         };
         if (dialog.ShowDialog() != true)
         {
@@ -97,8 +100,10 @@ public partial class UserDictionaryWindow : Window
         {
             await _dictionary.ImportUserEntriesAsync(dialog.FileName);
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException
+                                                or SqliteException or COMException or UnauthorizedAccessException)
         {
+            // 导入是用户主动触发的动作，失败要给出可读原因而不是让 async void 把进程带走。
             System.Windows.MessageBox.Show(
                 this,
                 exception.Message,

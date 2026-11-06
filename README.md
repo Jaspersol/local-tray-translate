@@ -53,7 +53,7 @@ The app starts hidden with a tray icon; a query window opens from the tray menu.
 | `Ctrl+Alt+X` | Take the current selection (via clipboard) and look it up |
 | `Ctrl+Alt+S` | Drag a box on screen, OCR it, and look the text up |
 
-Both are configurable from the tray icon → 设置. Registration failures are silent by design: a screenshot tool or an IME may already own the combination, and the main window and tray menu still work, so a popup on every start would be noise.
+Both are configurable from the tray icon → 设置. A global hotkey must include Ctrl, Alt, Shift or Win, and the two actions cannot share the same combination. If Windows refuses a combination (a screenshot tool or an IME already owns it), the tray menu marks it as 未生效 and a balloon explains which one failed; the app itself keeps running.
 
 ## Features
 
@@ -83,7 +83,7 @@ Both are configurable from the tray icon → 设置. Registration failures are s
 
 - **Separate file** — `%LOCALAPPDATA%\TranslateLite\user_dictionary.db` next to the main dictionary, so upgrading the dictionary never overwrites user data
 - **Manager window** — add, edit (double-click a row), delete, filter by word/translation/tag, and bulk import
-- **Bulk import format** — tab-separated, one entry per line, lines starting with `#` ignored:
+- **Bulk import format** — one entry per line, lines starting with `#` ignored; tab-separated (`.tsv`/`.txt`) or comma-separated CSV with optional quoted fields:
 
 ```text
 word<TAB>translation[<TAB>definition[<TAB>example]]
@@ -191,7 +191,7 @@ Yes — user entries live in a different file, so swapping `dictionary.db` leave
 <details>
 <summary><strong>A hotkey does nothing at all.</strong></summary>
 
-Another application already registered the combination (screenshot tools and IMEs are the usual suspects). Registration failures are ignored on purpose so the app still starts; pick a different combination in 设置.
+Another application already registered the combination (screenshot tools and IMEs are the usual suspects). The tray menu then shows the shortcut as 未生效 and a balloon names it; the app still starts, so pick a different combination in 设置.
 
 </details>
 
