@@ -9,13 +9,13 @@
 
     <LangVersion>12</LangVersion>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
-    <AssemblyName>LTT</AssemblyName>
+    <AssemblyName>LocalTrayTranslate</AssemblyName>
     <RootNamespace>TranslateLite</RootNamespace>
 
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <Version>0.1.2</Version>
-    <Product>LTT</Product>
-    <AssemblyTitle>LTT</AssemblyTitle>
+    <Product>LocalTrayTranslate</Product>
+    <AssemblyTitle>LocalTrayTranslate</AssemblyTitle>
     <Description>LTT - 轻量翻译词典工具</Description>
     <Authors>makabaka</Authors>
   </PropertyGroup>
