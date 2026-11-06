@@ -1,7 +1,7 @@
 <Window x:Class="TranslateLite.Windows.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="TranslateLite"
+        Title="LTT"
         Width="720"
         Height="520"
         MinWidth="520"

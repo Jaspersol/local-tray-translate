@@ -56,7 +56,7 @@ public sealed class TrayService : IDisposable
         _notifyIcon = new NotifyIcon
         {
             Icon = icon,
-            Text = "TranslateLite",
+            Text = "LTT",
             ContextMenuStrip = _menu,
             Visible = true
         };

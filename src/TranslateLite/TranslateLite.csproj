@@ -9,13 +9,15 @@
 
     <LangVersion>12</LangVersion>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
-    <AssemblyName>TranslateLite</AssemblyName>
+    <AssemblyName>LTT</AssemblyName>
     <RootNamespace>TranslateLite</RootNamespace>
 
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
-    <Version>1.0.0</Version>
-    <Description>TranslateLite - 轻量翻译词典工具</Description>
-    <Authors>TranslateLite</Authors>
+    <Version>0.1.2</Version>
+    <Product>LTT</Product>
+    <AssemblyTitle>LTT</AssemblyTitle>
+    <Description>LTT - 轻量翻译词典工具</Description>
+    <Authors>makabaka</Authors>
   </PropertyGroup>
 
   <ItemGroup>
