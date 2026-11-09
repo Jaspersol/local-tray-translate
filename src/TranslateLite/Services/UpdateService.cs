@@ -49,7 +49,7 @@ public sealed class UpdateService
     private readonly Func<AppSettings> _getSettings;
     private readonly Action<Action>? _marshalToUi;
 
-    /// <summary>当前程序版本，来自程序集版本（0.1.4）。</summary>
+    /// <summary>当前程序版本，来自程序集版本（0.1.5）。</summary>
     public static string CurrentVersion { get; } = ReadCurrentVersion();
 
     public UpdateService(SettingsService settings, Func<AppSettings> getSettings,

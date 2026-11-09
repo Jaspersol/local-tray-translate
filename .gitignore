@@ -15,6 +15,8 @@ data/raw/
 
 # Release archive
 *.zip
+*.zip.sha256
+SHA256SUMS.txt
 
 # Local UI preview scratch
 .ui-preview/
