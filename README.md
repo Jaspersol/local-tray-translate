@@ -4,9 +4,9 @@
 
 # TranslateLite
 
-### A lightweight Windows dictionary that answers offline in milliseconds
+### A lightweight Windows dictionary that answers offline
 
-**Double-tap a hotkey to look up the word under your cursor, or drag a box over a screen region and let Windows OCR read it — everything is served from a local SQLite dictionary, no network, no account.**
+**Press a hotkey to look up the word under your cursor, or drag a box over a screen region and let Windows OCR recognise the text. Everything comes from a local SQLite dictionary; no network request, no account.**
 
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#requirements)
 [![.NET](https://img.shields.io/badge/.NET-8-512BD4.svg)](https://dotnet.microsoft.com/)
@@ -22,19 +22,19 @@ English | [中文](README_ZH.md)
 
 ## Why TranslateLite?
 
-Most dictionary tools want to be a browser tab, a subscription, or a 2 GB download that loads the whole word list into memory. TranslateLite does one thing: it answers a lookup from a local SQLite file, stays in the tray at a few dozen megabytes, and survives being used forty times an hour while you read.
+Most dictionary tools grow into a browser tab, a subscription, or a 2 GB download that loads the whole word list into memory. TranslateLite answers lookups from a local SQLite file and stays in the tray at a few dozen megabytes.
 
-- **Local only** — a single `dictionary.db` (ECDICT + CC-CEDICT) queried through FTS5; no server, no telemetry
-- **Two hotkeys, two workflows** — `Ctrl+Alt+X` takes the current selection and searches it; `Ctrl+Alt+S` opens a capture overlay, OCRs the region, and searches the recognised text
-- **Tiered lookup instead of a single `LIKE`** — exact match, then user entries, then tokenised candidates, then FTS5 prefix search, then edit distance, so `helo` still finds `halo`
-- **A separate user dictionary** — your own entries live in `user_dictionary.db`, so replacing the main dictionary never touches them
-- **OCR, not machine translation** — screen capture reads the characters and looks *those* up, which is what you want for reading, not for translating full sentences
+- **Local only**: a single `dictionary.db` (ECDICT + CC-CEDICT) queried through FTS5; no server
+- **Two hotkeys, two workflows**: `Ctrl+Alt+X` takes the current selection and searches it, while `Ctrl+Alt+S` opens a capture overlay, OCRs the region, and searches the recognised text
+- **Tiered lookup instead of a single `LIKE`**: exact match, then user entries, then tokenised candidates, then FTS5 prefix search, then edit distance, so `helo` still finds `halo`
+- **A separate user dictionary**: your own entries live in `user_dictionary.db`, so replacing the main dictionary never touches them
+- **OCR, not machine translation**: screen capture reads the characters and looks *those* up, which suits reading rather than translating full sentences
 
 ## Requirements
 
-- **Windows 10 build 19041 (20H1) or later** — the app targets `net8.0-windows10.0.19041.0`
+- **Windows 10 build 19041 (20H1) or later**: the app targets `net8.0-windows10.0.19041.0`
 - **.NET 8 SDK** with the Windows Desktop workload, to build from source
-- **Windows OCR language packs** — install the Chinese and English OCR features in Windows Settings for the best recognition
+- **Windows OCR language packs**: install the Chinese and English OCR features in Windows Settings for the best recognition
 
 ## Quick Start
 
@@ -65,25 +65,30 @@ Both are configurable from the tray icon → 设置. A global hotkey must includ
   3. tokenised candidates, matched exactly one by one (Latin split on spaces and punctuation, Chinese with a 2–4 character sliding window)
   4. FTS5 prefix search over the full text, ordered by `rank`
   5. edit-distance fallback (OSA distance; budget 1 for ≤4 characters, 2 for ≤8, 3 above that), which is what makes `helo`→`halo` and `wrold`→`world` work
-- **User entries win** — a word you saved yourself is returned before the main dictionary's entry for the same word
-- **Result popup** — a separate always-on-top window, kept out of the taskbar, so a hotkey lookup doesn't have to reuse the query window you had open
+- **User entries win**: a word you saved yourself is returned before the main dictionary's entry for the same word
+- **Reused result popup**: one always-on-top window, kept out of the taskbar and shown again for each lookup; closing it hides the window for later reuse
 
 ### Capture and OCR
 
-- **Region overlay** — a translucent full-screen window to drag the box
-- **Windows built-in OCR** — `Windows.Media.Ocr`, preferring the OCR languages you have installed
-- **Clipboard-safe selection capture** — `Ctrl+C` is sent, the selection read, and the previous clipboard content restored afterwards
+- **Frozen-screen overlay**: capture mode snapshots the whole virtual screen on entry and shows it in an opaque, non-layered window; drag a box to pick the region and everything outside it dims
+- **Debounced capture**: while a capture is in progress, further hotkey presses and tray clicks are ignored, so repeated presses cannot stack overlays
+- **Frame-rate drag updates**: mouse moves are coalesced into one selection update per rendered frame, and the crop comes from the frozen frame with no fixed wait
+- **DPI-correct crop**: the selection uses Win32 physical screen coordinates, so display scaling does not shift or shrink the captured region
+- **In-memory OCR**: the crop is decoded through an in-memory stream with a reused `OcrEngine`, so no temporary PNG is written to disk
+- **Windows built-in OCR**: `Windows.Media.Ocr`, preferring the OCR languages you have installed
+- **Clipboard-safe selection capture**: `Ctrl+C` is sent, the selection read, and the previous clipboard content restored afterwards
 
 ### Tray and settings
 
-- **Tray resident** — closing the query window hides it; the tray menu has 打开 / 划词翻译 (with its hotkey) / 截图翻译 (with its hotkey) / 设置 / 退出
-- **Settings in `settings.json`** — both hotkeys (modifiers + virtual-key code) are persisted as JSON; a corrupt file falls back to defaults rather than blocking startup
+- **Tray resident**: closing the query window hides it; the tray menu has 打开 / 划词翻译 (with its hotkey) / 截图翻译 (with its hotkey) / 设置 / 退出
+- **Settings in `settings.json`**: both hotkeys (modifiers + virtual-key code) and the auto-start flag are persisted as JSON; a corrupt file falls back to defaults rather than blocking startup
+- **Auto-start**: enabled from the 常规 section of the settings window via the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` registry key; no admin rights needed, and the path is refreshed on the next start if you move the app folder
 
 ### User dictionary
 
-- **Separate file** — `%LOCALAPPDATA%\TranslateLite\user_dictionary.db` next to the main dictionary, so upgrading the dictionary never overwrites user data
-- **Manager window** — add, edit (double-click a row), delete, filter by word/translation/tag, and bulk import
-- **Bulk import format** — one entry per line, lines starting with `#` ignored; tab-separated (`.tsv`/`.txt`) or comma-separated CSV with optional quoted fields:
+- **Separate file**: `%LOCALAPPDATA%\TranslateLite\user_dictionary.db` next to the main dictionary, so upgrading the dictionary never overwrites user data
+- **Manager window**: add, edit (double-click a row), delete, filter by word/translation/tag, and bulk import
+- **Bulk import format**: one entry per line, lines starting with `#` ignored; tab-separated (`.tsv`/`.txt`) or comma-separated CSV with optional quoted fields:
 
 ```text
 word<TAB>translation[<TAB>definition[<TAB>example]]
@@ -144,6 +149,7 @@ src/TranslateLite
 |-- Services/TrayService.cs                Tray icon and menu
 |-- Services/ClipboardSelectionService.cs  Selection capture via the clipboard
 |-- Services/SettingsService.cs            settings.json persistence
+|-- Services/AutoStartService.cs           Auto-start registry entry
 `-- Windows/                               WPF windows: main, popup, capture, settings, user dictionary
 ```
 
@@ -184,7 +190,7 @@ Windows OCR only reads text the way the OS sees it; heavily styled web text, dar
 <details>
 <summary><strong>Can I replace the main dictionary while keeping my own entries?</strong></summary>
 
-Yes — user entries live in a different file, so swapping `dictionary.db` leaves `user_dictionary.db` untouched. That separation is the reason they are two databases rather than one table.
+Yes. User entries live in `user_dictionary.db`, a separate file, so swapping `dictionary.db` leaves them untouched.
 
 </details>
 
@@ -195,6 +201,13 @@ Another application already registered the combination (screenshot tools and IME
 
 </details>
 
+<details>
+<summary><strong>The box and the captured region do not line up on my multi-monitor setup.</strong></summary>
+
+The crop uses Win32 physical pixels. On monitors with different scaling factors, a single full-screen WPF window cannot map DIPs to pixels linearly, so the box can drift from the crop on the secondary monitor. Monitors sharing one scaling factor are unaffected.
+
+</details>
+
 ## License
 
-No license file is included in this repository yet — copyright of the respective authors, all rights reserved. Open an issue if you need explicit permission to reuse it.
+No license file is included in this repository yet; copyright belongs to the respective authors, all rights reserved. Open an issue if you need explicit permission to reuse it.

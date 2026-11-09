@@ -4,7 +4,7 @@ using TranslateLite.Models;
 
 namespace TranslateLite.Windows;
 
-/// <summary>快捷键设置窗口：捕获 Ctrl/Alt/Shift/Win 组合键并回传给调用方保存。</summary>
+/// <summary>设置窗口：捕获 Ctrl/Alt/Shift/Win 组合键，并管理开机自启等常规项；确认后回传给调用方保存。</summary>
 public partial class SettingsWindow : Window
 {
     // MOD_ALT / MOD_CONTROL / MOD_SHIFT / MOD_WIN：user32!RegisterHotKey 的 fsModifiers 位掩码，
@@ -21,8 +21,9 @@ public partial class SettingsWindow : Window
 
     public HotkeyConfig SelectionConfig { get; private set; }
     public HotkeyConfig ScreenOcrConfig { get; private set; }
+    public bool AutoStart { get; private set; }
 
-    public SettingsWindow(HotkeyConfig selectionConfig, HotkeyConfig screenOcrConfig)
+    public SettingsWindow(HotkeyConfig selectionConfig, HotkeyConfig screenOcrConfig, bool autoStart)
     {
         InitializeComponent();
 
@@ -33,6 +34,8 @@ public partial class SettingsWindow : Window
 
         SelectionConfig = selectionConfig;
         ScreenOcrConfig = screenOcrConfig;
+        AutoStart = autoStart;
+        AutoStartCheckBox.IsChecked = autoStart;
 
         SelectionHotkeyBox.Text = FormatHotkey(_selectionModifiers, _selectionKey);
         ScreenOcrHotkeyBox.Text = FormatHotkey(_screenOcrModifiers, _screenOcrKey);
@@ -208,6 +211,7 @@ public partial class SettingsWindow : Window
 
         SelectionConfig = new HotkeyConfig { Modifiers = _selectionModifiers, Key = _selectionKey };
         ScreenOcrConfig = new HotkeyConfig { Modifiers = _screenOcrModifiers, Key = _screenOcrKey };
+        AutoStart = AutoStartCheckBox.IsChecked == true;
         DialogResult = true;
         Close();
     }

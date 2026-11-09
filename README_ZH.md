@@ -4,9 +4,9 @@
 
 # TranslateLite
 
-### 一个毫秒级离线作答的轻量 Windows 词典
+### 一个离线作答的轻量 Windows 词典
 
-**按一次热键查光标下的词，或框选一块屏幕让 Windows OCR 认字再查 —— 全部由本地 SQLite 词典作答，不联网、不登录。**
+**按一次热键查光标下的词，或框选一块屏幕让 Windows OCR 识别再查。全部由本地 SQLite 词典作答，不联网、不登录。**
 
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#环境要求)
 [![.NET](https://img.shields.io/badge/.NET-8-512BD4.svg)](https://dotnet.microsoft.com/)
@@ -22,9 +22,9 @@
 
 ## 为什么做这个？
 
-多数词典工具要么想做成浏览器标签页，要么要订阅，要么一口气几百 MB 并把整个词表读进内存。TranslateLite 只做一件事：从本地 SQLite 文件里给出答案，以几十 MB 的体积常驻托盘，并且经得起你读书时一小时用上四十次。
+多数词典工具要么做成了浏览器标签页，要么要订阅，要么一口气几百 MB 并把整个词表读进内存。TranslateLite 从本地 SQLite 文件里给出答案，以几十 MB 的体积常驻托盘。
 
-- **纯本地** —— 单个 `dictionary.db`（ECDICT + CC-CEDICT），走 FTS5 全文检索；没有服务端，没有遥测
+- **纯本地** —— 单个 `dictionary.db`（ECDICT + CC-CEDICT），走 FTS5 全文检索；没有服务端
 - **两个热键，两条工作流** —— `Ctrl+Alt+X` 取当前选中内容查询；`Ctrl+Alt+S` 唤出截图遮罩、OCR 识别该区域后查询识别结果
 - **分层查询，而不是一条 `LIKE`** —— 精确匹配 → 用户词条 → 分词候选 → FTS5 前缀搜索 → 编辑距离兜底，所以 `helo` 也能找到 `halo`
 - **用户词典单独成库** —— 自补词条放在 `user_dictionary.db`，替换主词典永远不会动到它
@@ -66,18 +66,23 @@ dotnet run --project .\src\TranslateLite\TranslateLite.csproj
   4. 全文 FTS5 前缀搜索，按 `rank` 排序
   5. 编辑距离兜底（OSA 距离；预算：≤4 字符允许 1，≤8 允许 2，其余 3），`helo`→`halo`、`wrold`→`world` 就靠这一层
 - **用户词条优先** —— 自己存过的词先于主词典中同词的条目返回
-- **独立结果窗口** —— 置顶、不占任务栏的独立窗口，热键查询不必复用你已开着的查询窗口
+- **复用的结果窗口** —— 置顶、不占任务栏的同一个窗口，每次查询都刷新它；关闭只是隐藏，留给下次复用
 
 ### 取词与 OCR
 
-- **区域遮罩** —— 半透明全屏窗口用于拖框选择
+- **冻结画面的区域遮罩** —— 进入截图时抓一帧全屏画面，在不透明窗口里显示，拖框选区时框外压暗
+- **截图防抖** —— 一次截图流程进行中，再按热键或点托盘菜单都会被忽略，不会叠出多个遮罩
+- **按帧合并拖拽** —— 鼠标移动合并到每帧一次选区更新，裁剪来自冻结帧，不再有固定等待
+- **高 DPI 对齐** —— 选区使用 Win32 物理像素坐标，缩放显示下截图不会错位或变小
+- **内存里完成 OCR** —— 选区经内存流解码并复用 OCR 引擎，不写临时 PNG 文件
 - **调用系统 OCR** —— `Windows.Media.Ocr`，优先使用你已安装的 OCR 语言
 - **不破坏剪贴板的取词** —— 先发 `Ctrl+C`，读出选区后尽力恢复原有的剪贴板内容
 
 ### 托盘与设置
 
 - **常驻托盘** —— 关闭查询窗口只是隐藏；托盘菜单含「打开 / 划词翻译（带热键）/ 截图翻译（带热键）/ 设置 / 退出」
-- **设置存于 `settings.json`** —— 两个热键（修饰键 + 虚拟键码）以 JSON 持久化；文件损坏时回落默认值，而不是让应用起不来
+- **设置存于 `settings.json`** —— 两个热键（修饰键 + 虚拟键码）与开机自启开关以 JSON 持久化；文件损坏时回落默认值，而不是让应用起不来
+- **开机自启** —— 在设置窗口「常规」中勾选后写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`；无需管理员权限，程序移动目录后下次启动会自动修正路径
 
 ### 用户词典
 
@@ -144,6 +149,7 @@ src/TranslateLite
 |-- Services/TrayService.cs                 托盘图标与菜单
 |-- Services/ClipboardSelectionService.cs   经剪贴板取词
 |-- Services/SettingsService.cs             settings.json 持久化
+|-- Services/AutoStartService.cs            开机自启注册表项
 `-- Windows/                               WPF 窗口：主窗口、结果、截图、设置、用户词典
 ```
 
@@ -184,7 +190,7 @@ Windows OCR 只按系统「看到」的样子认字；强样式网页文字、�
 <details>
 <summary><strong>能替换主词典又保留自己的词条吗？</strong></summary>
 
-可以 —— 用户词条在另一个库里，替换 `dictionary.db` 完全不影响 `user_dictionary.db`。这也是它们被做成两个库而不是一张表的原因。
+可以。用户词条放在 `user_dictionary.db` 这个独立库里，替换 `dictionary.db` 不影响它们。
 
 </details>
 
@@ -192,6 +198,13 @@ Windows OCR 只按系统「看到」的样子认字；强样式网页文字、�
 <summary><strong>某个热键完全没反应。</strong></summary>
 
 已被其它程序占用（截图工具、输入法最常见）。托盘菜单会把该组合键显示为「未生效」，并弹出提示说明是哪一个；应用仍能启动，在「设置」里换一个组合即可。
+
+</details>
+
+<details>
+<summary><strong>多显示器上框选位置和截图内容对不上。</strong></summary>
+
+裁剪使用 Win32 物理像素。各显示器缩放比例不同时，单个全屏 WPF 窗口无法把 DIP 线性映射到像素，副屏上的框可能与裁剪区域有偏差；缩放比例一致的多屏不受影响。
 
 </details>
 

@@ -11,12 +11,31 @@ public partial class ResultPopupWindow : Window
 {
     private readonly DictionaryService _dictionary;
 
-    public ResultPopupWindow(string query, IReadOnlyList<DictionaryEntry> results, DictionaryService dictionary)
+    public ResultPopupWindow(DictionaryService dictionary)
     {
         InitializeComponent();
         _dictionary = dictionary;
+    }
+
+    /// <summary>复用同一窗口展示一次新的查询结果：刷新内容、回到顶部并带到前台。</summary>
+    public void ShowResult(string query, IReadOnlyList<DictionaryEntry> results)
+    {
         QueryBox.Text = query;
         RenderResults(results);
+        ResultScroll.ScrollToTop();
+        if (!IsVisible)
+        {
+            Show();
+        }
+
+        Activate();
+    }
+
+    // 与主窗口一致：关闭只是隐藏，窗口对象留给下一次查询复用。
+    private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        e.Cancel = true;
+        Hide();
     }
 
     private async void OnQueryClicked(object sender, RoutedEventArgs e) => await LookupAsync();
@@ -51,6 +70,8 @@ public partial class ResultPopupWindow : Window
             {
                 Text = "没有找到词典条目。",
                 Foreground = ThemeBrush("BrushTextMuted"),
+                FontSize = 13.5,
+                Margin = new Thickness(4, 8, 4, 8),
                 TextWrapping = TextWrapping.Wrap
             });
             return;
@@ -60,9 +81,9 @@ public partial class ResultPopupWindow : Window
         {
             var container = new Border
             {
-                BorderBrush = ThemeBrush("BrushBorder"),
+                BorderBrush = ThemeBrush("BrushDivider"),
                 BorderThickness = new Thickness(0, 0, 0, 1),
-                Padding = new Thickness(0, 12, 0, 12)
+                Padding = new Thickness(0, 16, 0, 16)
             };
 
             var headword = string.IsNullOrWhiteSpace(result.Phonetic)
@@ -71,7 +92,7 @@ public partial class ResultPopupWindow : Window
             var stack = new StackPanel();
             stack.Children.Add(ReadOnlyText(
                 headword,
-                fontSize: 18,
+                fontSize: 19,
                 fontWeight: FontWeights.SemiBold,
                 foreground: ThemeBrush("BrushTextPrimary"),
                 topMargin: 0,
@@ -81,14 +102,14 @@ public partial class ResultPopupWindow : Window
                 fontSize: 15,
                 fontWeight: null,
                 foreground: ThemeBrush("BrushTextPrimary"),
-                topMargin: 8,
+                topMargin: 10,
                 italic: false));
             stack.Children.Add(ReadOnlyText(
                 result.Definition,
                 fontSize: 13,
                 fontWeight: null,
                 foreground: ThemeBrush("BrushTextSecondary"),
-                topMargin: 4,
+                topMargin: 6,
                 italic: false));
 
             if (!string.IsNullOrWhiteSpace(result.Example))
@@ -98,7 +119,7 @@ public partial class ResultPopupWindow : Window
                     fontSize: 13,
                     fontWeight: null,
                     foreground: ThemeBrush("BrushTextMuted"),
-                    topMargin: 6,
+                    topMargin: 8,
                     italic: true));
             }
 
@@ -133,6 +154,7 @@ public partial class ResultPopupWindow : Window
             FontWeight = fontWeight ?? FontWeights.Normal,
             Margin = new Thickness(0, topMargin, 0, 0),
             Padding = new Thickness(0),
+            MinHeight = 0,
             VerticalAlignment = VerticalAlignment.Top
         };
         return box;

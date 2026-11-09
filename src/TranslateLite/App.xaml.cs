@@ -34,6 +34,13 @@ public partial class App : System.Windows.Application
     private Thread? _activationListener;
     private bool _unhandledExceptionShown;
 
+    // 截图流程的单一飞行守卫：ShowDialog 的嵌套消息泵在遮罩期间仍会派发 WM_HOTKEY，
+    // 托盘菜单也可能被再次点击；同一时刻只允许一个截图流程，重复触发直接丢弃。
+    private int _captureInProgress;
+
+    // 结果弹窗复用同一个实例，避免连续多次翻译堆积出多个窗口。
+    private ResultPopupWindow? _resultPopup;
+
     // WPF 的 OnStartup 只能是 async void；未捕获的异常会直接终止进程。
     // 三层兜底：每个 async void 入口自行 try/catch、Dispatcher 未处理异常、进程级未处理异常。
     protected override async void OnStartup(StartupEventArgs e)
@@ -89,19 +96,25 @@ public partial class App : System.Windows.Application
         _tray = new TrayService(
             showAction: () => ShowMainWindow(),
             // 托盘菜单点下去时菜单还没关闭、前台窗口也还没拿回焦点，立刻复制会抓错窗口；
-            // 截图入口一直有这个延迟，划词入口同样需要。
+            // 两个托盘入口各自等 300ms，热键入口不需要这段延时。
             selectionAction: async () =>
             {
                 await Task.Delay(300);
                 await TranslateSelectionAsync();
             },
-            screenOcrAction: async () => await TranslateScreenRegionAsync(),
+            screenOcrAction: async () =>
+            {
+                await Task.Delay(300);
+                await TranslateScreenRegionAsync();
+            },
             settingsAction: OpenSettings,
             exitAction: Shutdown);
 
         // 先按配置显示组合键；注册失败时 ApplyHotkeyRegistration 会改成「未生效」并弹提示。
         var (selectionText, screenOcrText) = FormatHotkeyTexts(_appSettings);
         _tray.Initialize(selectionText, screenOcrText);
+        // 把注册表启动项对齐到设置值，顺便修正程序被挪目录后残留的旧路径。
+        SyncAutoStart();
 
         _hotkeys = new HotkeyService();
         _hotkeys.SelectionRequested += async (_, _) => await TranslateSelectionAsync();
@@ -317,19 +330,37 @@ public partial class App : System.Windows.Application
 
         _hotkeys?.UnregisterAll();
 
-        var settingsWindow = new SettingsWindow(_appSettings.SelectionHotkey, _appSettings.ScreenOcrHotkey);
+        var settingsWindow = new SettingsWindow(_appSettings.SelectionHotkey, _appSettings.ScreenOcrHotkey, _appSettings.AutoStart);
         var result = settingsWindow.ShowDialog();
 
         if (result == true)
         {
             _appSettings.SelectionHotkey = settingsWindow.SelectionConfig;
             _appSettings.ScreenOcrHotkey = settingsWindow.ScreenOcrConfig;
+            _appSettings.AutoStart = settingsWindow.AutoStart;
             _settings.Save(_appSettings);
+            SyncAutoStart();
         }
 
         // 设置窗口无论确认还是取消都要重注册：取消时沿用旧配置，正好把先前 UnregisterAll 的热键恢复。
         // 保存后的组合键同样可能被别的程序占用，因此结果统一走 ApplyHotkeyRegistration 报告。
         ApplyHotkeyRegistration();
+    }
+
+    /// <summary>把开机自启设置对齐到注册表；失败时仅提示，不阻断启动或设置保存。</summary>
+    private void SyncAutoStart()
+    {
+        if (_appSettings is null)
+        {
+            return;
+        }
+
+        if (!AutoStartService.Apply(_appSettings.AutoStart) && _appSettings.AutoStart)
+        {
+            _tray?.ShowWarning(
+                "开机自启未生效",
+                "无法写入 Windows 启动项，请检查安全软件或系统策略是否禁止修改注册表。");
+        }
     }
 
     /// <summary>注册热键并把结果如实反映到托盘菜单：注册失败的组合不能显示成生效状态。</summary>
@@ -484,23 +515,34 @@ public partial class App : System.Windows.Application
 
     private async Task TranslateScreenRegionAsync()
     {
-        if (_ocr is null)
+        // 防抖：ShowDialog 的嵌套消息泵在遮罩期间仍会派发 WM_HOTKEY，托盘菜单也可能被再次点击；
+        // 守卫覆盖整个流程（选区 → OCR → 弹结果），期间任何重复触发都直接丢弃。
+        if (Interlocked.CompareExchange(ref _captureInProgress, 1, 0) != 0)
         {
             return;
         }
 
-        // 托盘菜单关闭后焦点尚未回到前台窗口，立刻截图会把菜单残影一起抓进去。
-        await Task.Delay(300);
-
-        var overlay = new CaptureOverlayWindow();
-        var selected = overlay.CaptureRegion();
-        if (selected is null)
+        try
         {
-            return;
-        }
+            if (_ocr is null)
+            {
+                return;
+            }
 
-        var text = await _ocr.ReadTextAsync(selected);
-        await ShowLookupAsync(text);
+            var overlay = new CaptureOverlayWindow();
+            var selected = overlay.CaptureRegion();
+            if (selected is null)
+            {
+                return;
+            }
+
+            var text = await _ocr.ReadTextAsync(selected);
+            await ShowLookupAsync(text);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _captureInProgress, 0);
+        }
     }
 
     private async Task ShowLookupAsync(string? text)
@@ -511,9 +553,8 @@ public partial class App : System.Windows.Application
         }
 
         var results = await _dictionary.LookupAsync(text);
-        var popup = new ResultPopupWindow(text.Trim(), results, _dictionary);
-        popup.Show();
-        popup.Activate();
+        _resultPopup ??= new ResultPopupWindow(_dictionary);
+        _resultPopup.ShowResult(text.Trim(), results);
     }
 
     private const int SwRestore = 9;
