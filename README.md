@@ -84,6 +84,13 @@ Both are configurable from the tray icon → 设置. A global hotkey must includ
 - **Settings in `settings.json`**: both hotkeys (modifiers + virtual-key code) and the auto-start flag are persisted as JSON; a corrupt file falls back to defaults rather than blocking startup
 - **Auto-start**: enabled from the 常规 section of the settings window via the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` registry key; no admin rights needed, and the path is refreshed on the next start if you move the app folder
 
+### Checking for updates
+
+- **Two check paths** — check manually from 关于与更新 in the settings window, or enable the startup auto-check (at most once every 6 hours; it only notifies, never downloads). The primary path calls the GitHub REST API `repos/Jaspersol/local-tray-translate/releases/latest` for the version, release notes, asset and checksum. When the API is rate-limited (403) or unreachable it switches to a direct-link fallback that never touches `api.github.com`: the version tag comes from the `releases/latest` redirect and the asset name plus SHA256 from `SHA256SUMS.txt`.
+- **Two download paths** — installation tries the asset's `browser_download_url` first, then the API asset URL, and finally the `releases/latest/download/<name>` direct link; each candidate is retried once.
+- **Mandatory verification** — the SHA256 comes from the API asset `digest`, `<zip>.sha256`, or `SHA256SUMS.txt`; a missing or mismatching hash aborts the install. Downloads also enforce an HTTPS + GitHub host allowlist (checked on every redirect hop), a size cap and a zip magic check.
+- **Install** — the portable build has no installer: the verified package is extracted beside the app folder into `.new`, and after the app exits a script atomically swaps the directory and restarts it. User data stays in `%LOCALAPPDATA%\TranslateLite`.
+
 ### User dictionary
 
 - **Separate file**: `%LOCALAPPDATA%\TranslateLite\user_dictionary.db` next to the main dictionary, so upgrading the dictionary never overwrites user data
@@ -134,7 +141,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\src\TranslateLite\publish.
 dotnet publish .\src\TranslateLite\TranslateLite.csproj -c Release -p:PublishProfile=FolderProfile -o .\publish
 ```
 
-The result is a self-contained folder with `TranslateLite.exe` and `dictionary.db`; zip the whole `publish` folder to distribute it.
+The result is a self-contained folder with `TranslateLite.exe` and `dictionary.db`. `publish.ps1` also packs it into `LocalTrayTranslate-<version>-win-x64.zip` and writes `<zip>.sha256` plus `SHA256SUMS.txt`; upload all three files to the Release, because both the API path and the direct-link fallback depend on the checksums.
 
 ## Project Structure
 
@@ -150,6 +157,8 @@ src/TranslateLite
 |-- Services/ClipboardSelectionService.cs  Selection capture via the clipboard
 |-- Services/SettingsService.cs            settings.json persistence
 |-- Services/AutoStartService.cs           Auto-start registry entry
+|-- Models/UpdateInfo.cs               Update result and download progress models
+|-- Services/UpdateService.cs          Update check/download/install (API + direct-link paths)
 `-- Windows/                               WPF windows: main, popup, capture, settings, user dictionary
 ```
 

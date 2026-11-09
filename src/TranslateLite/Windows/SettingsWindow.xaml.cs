@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Controls;
 using TranslateLite.Models;
+using TranslateLite.Services;
 
 namespace TranslateLite.Windows;
 
@@ -19,14 +21,22 @@ public partial class SettingsWindow : Window
     private uint _screenOcrModifiers;
     private uint _screenOcrKey;
 
+
+    private readonly UpdateService _updateService;
+    private bool _checking;
+    private bool _installing;
+    private UpdateInfo? _updateInfo;
     public HotkeyConfig SelectionConfig { get; private set; }
     public HotkeyConfig ScreenOcrConfig { get; private set; }
     public bool AutoStart { get; private set; }
 
-    public SettingsWindow(HotkeyConfig selectionConfig, HotkeyConfig screenOcrConfig, bool autoStart)
+    public bool AutoCheckUpdate { get; private set; }
+    public SettingsWindow(HotkeyConfig selectionConfig, HotkeyConfig screenOcrConfig, bool autoStart,
+        bool autoCheckUpdate, UpdateService updateService)
     {
         InitializeComponent();
 
+        _updateService = updateService;
         _selectionModifiers = selectionConfig.Modifiers;
         _selectionKey = selectionConfig.Key;
         _screenOcrModifiers = screenOcrConfig.Modifiers;
@@ -35,15 +45,25 @@ public partial class SettingsWindow : Window
         SelectionConfig = selectionConfig;
         ScreenOcrConfig = screenOcrConfig;
         AutoStart = autoStart;
+        AutoCheckUpdate = autoCheckUpdate;
         AutoStartCheckBox.IsChecked = autoStart;
+        AutoCheckUpdateCheckBox.IsChecked = autoCheckUpdate;
+        VersionText.Text = "v" + UpdateService.CurrentVersion;
 
         SelectionHotkeyBox.Text = FormatHotkey(_selectionModifiers, _selectionKey);
         ScreenOcrHotkeyBox.Text = FormatHotkey(_screenOcrModifiers, _screenOcrKey);
+
+        // 新开的设置窗口直接复用上次检查的缓存结果，不必再发一次网络请求。
+        _updateInfo = UpdateService.LastResult();
+        if (_updateInfo is not null)
+        {
+            RenderUpdateInfo();
+        }
     }
 
     private void OnHotkeyBoxGotFocus(object sender, RoutedEventArgs e)
     {
-        if (sender is TextBox box)
+        if (sender is System.Windows.Controls.TextBox box)
         {
             box.SelectAll();
         }
@@ -212,9 +232,172 @@ public partial class SettingsWindow : Window
         SelectionConfig = new HotkeyConfig { Modifiers = _selectionModifiers, Key = _selectionKey };
         ScreenOcrConfig = new HotkeyConfig { Modifiers = _screenOcrModifiers, Key = _screenOcrKey };
         AutoStart = AutoStartCheckBox.IsChecked == true;
+        AutoCheckUpdate = AutoCheckUpdateCheckBox.IsChecked == true;
         DialogResult = true;
         Close();
     }
+
+
+    private async void OnCheckUpdateClick(object sender, RoutedEventArgs e)
+    {
+        if (_checking || _installing)
+        {
+            return;
+        }
+
+        _checking = true;
+        CheckUpdateButton.IsEnabled = false;
+        CheckUpdateButton.Content = "检查中…";
+        HideUpdateDetails();
+        ShowUpdateStatus("正在检查更新…", false);
+        try
+        {
+            _updateInfo = await _updateService.CheckAsync();
+            RenderUpdateInfo();
+        }
+        catch (Exception exception)
+        {
+            _updateInfo = null;
+            ShowUpdateStatus(exception.Message, true);
+        }
+        finally
+        {
+            _checking = false;
+            CheckUpdateButton.IsEnabled = true;
+            CheckUpdateButton.Content = "检查更新";
+        }
+    }
+
+    private async void OnInstallUpdateClick(object sender, RoutedEventArgs e)
+    {
+        if (_checking || _installing)
+        {
+            return;
+        }
+
+        _installing = true;
+        CheckUpdateButton.IsEnabled = false;
+        InstallButton.IsEnabled = false;
+        InstallButton.Content = "下载中…";
+        ReleasePageButton.IsEnabled = false;
+        UpdateProgressBar.Visibility = Visibility.Visible;
+        UpdateProgressBar.IsIndeterminate = true;
+        UpdateProgressBar.Value = 0;
+        ShowUpdateStatus("正在下载更新包…", false);
+
+        var progress = new Progress<UpdateProgress>(report =>
+        {
+            UpdateProgressBar.Visibility = Visibility.Visible;
+            if (report.Total is { } total && total > 0)
+            {
+                UpdateProgressBar.IsIndeterminate = false;
+                UpdateProgressBar.Value = Math.Min(100, report.Downloaded * 100.0 / total);
+            }
+            else
+            {
+                UpdateProgressBar.IsIndeterminate = true;
+            }
+        });
+
+        try
+        {
+            await _updateService.InstallLatestAsync(progress,
+                () => System.Windows.Application.Current.Shutdown());
+            ShowUpdateStatus("下载完成，正在安装并重启应用…", false);
+        }
+        catch (Exception exception)
+        {
+            _installing = false;
+            CheckUpdateButton.IsEnabled = true;
+            InstallButton.IsEnabled = true;
+            InstallButton.Content = "下载并安装";
+            ReleasePageButton.IsEnabled = true;
+            UpdateProgressBar.Visibility = Visibility.Collapsed;
+            ShowUpdateStatus(exception.Message + " 也可直接从 GitHub Release 页面手动下载。", true);
+        }
+    }
+
+    private void OnOpenReleasePageClick(object sender, RoutedEventArgs e)
+    {
+        if (_updateInfo?.ReleaseUrl is not { } url)
+        {
+            return;
+        }
+
+        try
+        {
+            UpdateService.OpenReleasePage(url);
+        }
+        catch (Exception exception)
+        {
+            ShowUpdateStatus(exception.Message, true);
+        }
+    }
+
+    private void RenderUpdateInfo()
+    {
+        var info = _updateInfo;
+        if (info is null)
+        {
+            UpdateBox.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        HideUpdateDetails();
+        UpdateBox.Visibility = Visibility.Visible;
+        if (!info.HasUpdate)
+        {
+            ShowUpdateStatus($"当前已是最新版本 v{info.CurrentVersion}", false);
+            return;
+        }
+
+        var channel = info.FromFallback ? "（直链备用通道）" : "";
+        if (info.Sha256 is null || string.IsNullOrWhiteSpace(info.DownloadUrl))
+        {
+            ShowUpdateStatus(
+                $"发现新版本 v{info.LatestVersion} {channel}，但缺少可用的更新包或校验值，请前往 GitHub 手动下载。",
+                true);
+        }
+        else
+        {
+            ShowUpdateStatus($"发现新版本 v{info.LatestVersion} {channel}", false);
+        }
+
+        if (!string.IsNullOrWhiteSpace(info.Notes))
+        {
+            UpdateNotesText.Text = info.Notes;
+            NotesViewer.Visibility = Visibility.Visible;
+        }
+
+        UpdateActions.Visibility = Visibility.Visible;
+        InstallButton.IsEnabled = !string.IsNullOrWhiteSpace(info.DownloadUrl) && info.Sha256 is not null;
+        ReleasePageButton.Visibility = string.IsNullOrWhiteSpace(info.ReleaseUrl)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        AssetSizeText.Text = info.AssetSize is { } size && size > 0 ? FormatSize(size) : "";
+    }
+
+    private void ShowUpdateStatus(string text, bool isError)
+    {
+        UpdateBox.Visibility = Visibility.Visible;
+        UpdateStatusText.Text = text;
+        UpdateStatusText.SetResourceReference(TextBlock.ForegroundProperty,
+            isError ? "BrushDanger" : "BrushTextPrimary");
+    }
+
+    private void HideUpdateDetails()
+    {
+        NotesViewer.Visibility = Visibility.Collapsed;
+        UpdateNotesText.Text = "";
+        UpdateProgressBar.Visibility = Visibility.Collapsed;
+        UpdateActions.Visibility = Visibility.Collapsed;
+        ReleasePageButton.Visibility = Visibility.Collapsed;
+        AssetSizeText.Text = "";
+    }
+
+    private static string FormatSize(long bytes) => bytes >= 1024 * 1024
+        ? $"{bytes / 1024.0 / 1024.0:0.0} MB"
+        : $"{bytes / 1024.0:0.0} KB";
 
     private void OnCancelClick(object sender, RoutedEventArgs e)
     {

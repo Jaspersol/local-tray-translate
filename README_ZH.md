@@ -84,6 +84,13 @@ dotnet run --project .\src\TranslateLite\TranslateLite.csproj
 - **设置存于 `settings.json`** —— 两个热键（修饰键 + 虚拟键码）与开机自启开关以 JSON 持久化；文件损坏时回落默认值，而不是让应用起不来
 - **开机自启** —— 在设置窗口「常规」中勾选后写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`；无需管理员权限，程序移动目录后下次启动会自动修正路径
 
+### 检查更新
+
+- **两条检查路径** —— 设置窗口「关于与更新」里手动检查，或打开「启动时自动检查」（每 6 小时最多一次，只提示不自动下载）。主路径请求 GitHub REST API `repos/Jaspersol/local-tray-translate/releases/latest`，读取版本、发布说明、资产与校验值；API 被限流（403）或不可达时自动切到直链备用方案：从 `releases/latest` 的重定向里读版本 tag，从 `SHA256SUMS.txt` 读资产名与 SHA256，全程不碰 `api.github.com`。
+- **两条下载路径** —— 安装时优先用 release 资产的 `browser_download_url`，失败再试 API 资产地址，最后兜底到 `releases/latest/download/<name>` 直链；每个候选重试一次。
+- **强制校验** —— 校验值来自 API 资产的 `digest`、`<zip>.sha256` 或 `SHA256SUMS.txt`；缺失或 SHA256 不匹配一律拒绝安装。下载还限制 HTTPS + GitHub 域名白名单（重定向逐跳校验）、包体上限与 zip 文件头。
+- **安装方式** —— 便携版没有安装程序：校验通过的更新包解压到程序目录旁的 `.new`，应用退出后由脚本做目录级原子替换并重启；用户数据仍在 `%LOCALAPPDATA%\TranslateLite`，不受影响。
+
 ### 用户词典
 
 - **独立的库文件** —— `%LOCALAPPDATA%\TranslateLite\user_dictionary.db`，与主词典分开，升级词典不会覆盖用户数据
@@ -134,7 +141,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\src\TranslateLite\publish.
 dotnet publish .\src\TranslateLite\TranslateLite.csproj -c Release -p:PublishProfile=FolderProfile -o .\publish
 ```
 
-产物是自包含的目录，含 `TranslateLite.exe` 与 `dictionary.db`；把整个 `publish` 目录打成 ZIP 即可分发。
+产物是自包含的目录，含 `TranslateLite.exe` 与 `dictionary.db`。`publish.ps1` 会额外打包成 `LocalTrayTranslate-<版本>-win-x64.zip`，并生成 `<zip>.sha256` 与 `SHA256SUMS.txt`；发布 Release 时三个文件都要上传，检查更新的主路径与直链兜底路径都依赖校验值。
 
 ## 项目结构
 
@@ -150,6 +157,8 @@ src/TranslateLite
 |-- Services/ClipboardSelectionService.cs   经剪贴板取词
 |-- Services/SettingsService.cs             settings.json 持久化
 |-- Services/AutoStartService.cs            开机自启注册表项
+|-- Models/UpdateInfo.cs                   检查结果与下载进度模型
+|-- Services/UpdateService.cs             检查/下载/安装更新（API + 直链双路径）
 `-- Windows/                               WPF 窗口：主窗口、结果、截图、设置、用户词典
 ```
 

@@ -97,6 +97,19 @@ public sealed class TrayService : IDisposable
         }
     }
 
+    /// <summary>用 Info 气泡提示一条非阻断消息（如发现新版本）。</summary>
+    public void ShowInfo(string title, string message)
+    {
+        try
+        {
+            _notifyIcon?.ShowBalloonTip(5000, title, message, ToolTipIcon.Info);
+        }
+        catch
+        {
+            // 与 ShowWarning 一致：系统通知不可用时静默忽略。
+        }
+    }
+
     public void UpdateHotkeyTexts(string selectionHotkeyText, string screenOcrHotkeyText)
     {
         if (_selectionItem is not null)

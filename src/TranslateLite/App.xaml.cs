@@ -28,6 +28,7 @@ public partial class App : System.Windows.Application
     private OcrService? _ocr;
     private MainWindow? _mainWindow;
     private SettingsService? _settings;
+    private UpdateService? _updateService;
     private AppSettings? _appSettings;
     private Mutex? _instanceMutex;
     private EventWaitHandle? _activationSignal;
@@ -121,6 +122,10 @@ public partial class App : System.Windows.Application
         _hotkeys.ScreenOcrRequested += async (_, _) => await TranslateScreenRegionAsync();
 
         ApplyHotkeyRegistration();
+
+        _updateService = new UpdateService(_settings!, () => _appSettings!,
+            action => Dispatcher.BeginInvoke(action));
+        _ = AutoCheckForUpdatesAsync();
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -330,7 +335,8 @@ public partial class App : System.Windows.Application
 
         _hotkeys?.UnregisterAll();
 
-        var settingsWindow = new SettingsWindow(_appSettings.SelectionHotkey, _appSettings.ScreenOcrHotkey, _appSettings.AutoStart);
+        var settingsWindow = new SettingsWindow(_appSettings.SelectionHotkey, _appSettings.ScreenOcrHotkey,
+            _appSettings.AutoStart, _appSettings.AutoCheckUpdate, _updateService!);
         var result = settingsWindow.ShowDialog();
 
         if (result == true)
@@ -338,6 +344,7 @@ public partial class App : System.Windows.Application
             _appSettings.SelectionHotkey = settingsWindow.SelectionConfig;
             _appSettings.ScreenOcrHotkey = settingsWindow.ScreenOcrConfig;
             _appSettings.AutoStart = settingsWindow.AutoStart;
+            _appSettings.AutoCheckUpdate = settingsWindow.AutoCheckUpdate;
             _settings.Save(_appSettings);
             SyncAutoStart();
         }
@@ -345,6 +352,30 @@ public partial class App : System.Windows.Application
         // 设置窗口无论确认还是取消都要重注册：取消时沿用旧配置，正好把先前 UnregisterAll 的热键恢复。
         // 保存后的组合键同样可能被别的程序占用，因此结果统一走 ApplyHotkeyRegistration 报告。
         ApplyHotkeyRegistration();
+    }
+
+    /// <summary>后台自动检查；发现新版本只用托盘气泡提示，不自动下载。</summary>
+    private async Task AutoCheckForUpdatesAsync()
+    {
+        if (_updateService is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var info = await _updateService.AutoCheckAsync();
+            if (info is not null)
+            {
+                _tray?.ShowInfo(
+                    "发现新版本",
+                    $"LocalTrayTranslate v{info.LatestVersion} 已发布，可在「设置 → 关于与更新」中下载安装。");
+            }
+        }
+        catch
+        {
+            // 自动检查失败不影响托盘常驻，也不弹窗打扰用户。
+        }
     }
 
     /// <summary>把开机自启设置对齐到注册表；失败时仅提示，不阻断启动或设置保存。</summary>
